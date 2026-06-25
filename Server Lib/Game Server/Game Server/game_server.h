@@ -34,8 +34,6 @@
 #error Unknown pointer size or missing size macros!
 #endif
 
-#include "../../Projeto IOCP/TYPE/smart_calculator_type.hpp"
-
 namespace stdA {
 	class game_server : public server
 #if INTPTR_MAX == INT64_MAX && MY_GG_SRV_LIB == 0
@@ -70,9 +68,6 @@ namespace stdA {
 			DailyQuestInfo& getDailyQuestInfo() { return m_dqi; };
 
 			LoginManager& getLoginManager();
-
-			virtual void sendSmartCalculatorReplyToPlayer(const uint32_t _uid, std::string _from, std::string _msg) override;
-			virtual void sendNoticeGMFromDiscordCmd(std::string& _notice) override;
 
 			// Login
 			void requestLogin(player& _session, packet *_packet);
@@ -211,10 +206,7 @@ namespace stdA {
 			// Make Bot GM Event Room
 			virtual void makeBotGMEventRoom();
 
-			// Verifica e executa os comandos do Smart Calculator
-			virtual bool checkSmartCalculatorCmd(player& _session, std::string& _msg, eTYPE_CALCULATOR_CMD _type);
-
-		public:
+			public:
 			// Destroy room
 			virtual void destroyRoom(unsigned char _channel_owner, short _number);
 

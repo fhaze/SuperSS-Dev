@@ -19,7 +19,6 @@
 #include "../../Projeto IOCP/PANGYA_DB/pangya_db.h"
 
 #include "../TYPE/golden_time_type.hpp"
-#include "../../Projeto IOCP/TYPE/smart_calculator_type.hpp"
 
 namespace stdA {
     class channel {
@@ -95,9 +94,7 @@ namespace stdA {
 			// make Bot GM Event Room
 			void makeBotGMEventRoom(stRangeTime& _rt, std::vector< stReward > _reward);
 
-			bool execSmartCalculatorCmd(player& _session, std::string& _msg, eTYPE_CALCULATOR_CMD _type);
-
-		public:	// REQUEST FROM CLIENT
+			public:	// REQUEST FROM CLIENT
 			// Lobby
 			void requestEnterLobby(player& _session, packet *_packet);
 			void requestExitLobby(player& _session, packet *_packet);

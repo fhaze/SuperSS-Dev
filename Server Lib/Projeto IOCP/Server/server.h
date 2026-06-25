@@ -176,21 +176,7 @@ namespace stdA {
 			virtual void sendCommandToOtherServerWithAuthServer(packet& _packet, uint32_t _send_server_uid_or_type) override;
 			virtual void sendReplyToOtherServerWithAuthServer(packet& _packet, uint32_t _send_server_uid_or_type) override;
 
-		// Smart Calcualtor And Discord Chat History, Quem usa é só o Game Server(Smart Calculator e Chat History) e Message Server(Chat History)
-		public:
-			// get and set - Flag chat discord
-			bool getChatDiscord();
-			void setChatDiscord(bool _chat_discord);
-
-			virtual void sendSmartCalculatorReplyToPlayer(const uint32_t _uid, std::string _from, std::string _msg);
-			virtual void sendNoticeGMFromDiscordCmd(std::string& _notice);
-
-			virtual void sendMessageToDiscordChatHistory(std::string _nickname, std::string _msg);
-
-		protected:
-			bool m_chat_discord;	// Flag que habilita ou desabilita o chat ser enviado para o discord pelo Smart Calculator pelo Bot do Discord
-
-		protected:
+			protected:
 			thread *m_thread_monitor;
 
 #if defined(_WIN32)

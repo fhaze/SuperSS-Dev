@@ -21,7 +21,6 @@
 #include <map>
 
 #include "../TYPE/game_type.hpp"
-#include "../../Projeto IOCP/TYPE/smart_calculator_type.hpp"
 
 #include "../../Projeto IOCP/TIMER/timer.h"
 
@@ -158,11 +157,6 @@ namespace stdA {
 			virtual void requestReplyInitialValueGrandZodiac(player& _session, packet *_packet);
 
 			virtual void requestReadSyncShotData(player& _session, packet *_packet, ShotSyncData& _ssd);
-
-			// Smart Calculator Command
-			virtual bool execSmartCalculatorCmd(player& _session, std::string& _msg, eTYPE_CALCULATOR_CMD _type);
-
-			virtual stGameShotValue getGameShotValueToSmartCalculator(player& _session, unsigned char _club_index, unsigned char _power_shot_index);
 
 			// Tempo
 			// Start Time Tem sua definições

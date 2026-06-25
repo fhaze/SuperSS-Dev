@@ -69,7 +69,7 @@ server::server(session_manager& _session_manager, uint32_t _accept_thread_num, u
 	  EventShutdown(nullptr), 
 	  EventAcceptConnection(nullptr),
 #endif
-	  m_shutdown(nullptr), m_Bot_TTL(10000u), m_chat_discord(true)/*Padrão ativado*/ {
+	  m_shutdown(nullptr), m_Bot_TTL(10000u) {
 	
 	try {
 
@@ -2480,45 +2480,4 @@ void server::sendReplyToOtherServerWithAuthServer(packet& _packet, uint32_t _sen
 	}
 };
 
-// Chat Discord
-bool server::getChatDiscord() {
-	return m_chat_discord;
-};
 
-void server::setChatDiscord(bool _chat_discord) {
-	m_chat_discord = _chat_discord;
-};
-
-// Quem usa é só o Game Server(Smart Calculator e Chat History) e Message Server(Chat History)
-void server::sendSmartCalculatorReplyToPlayer(const uint32_t _uid, std::string _from, std::string _msg) {
-	UNREFERENCED_PARAMETER(_uid);
-	UNREFERENCED_PARAMETER(_from);
-	UNREFERENCED_PARAMETER(_msg);
-}
-
-// Quem usa é só o Game Server(Smart Calculator e Chat History) e Message Server(Chat History)
-void server::sendNoticeGMFromDiscordCmd(std::string& _notice) {
-	UNREFERENCED_PARAMETER(_notice);
-};
-
-void server::sendMessageToDiscordChatHistory(std::string _nickname, std::string _msg) {
-
-	try {
-
-		// Invalid msg or nickname
-		if (_nickname.empty() || _msg.empty())
-			return;
-
-		// Verifica se o m_chat_discod flag está ativo para enviar o chat para o discord
-		if (m_si.rate.smart_calculator && m_chat_discord)
-			sSmartCalculator::getInstance().sendCommandServer(_nickname + " - " + _msg);
-		
-	}catch (exception& e) {
-
-#ifdef _DEBUG
-		_smp::message_pool::getInstance().push(new message("[server::sendMessageToDiscordChatHistory][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
-#else
-		_smp::message_pool::getInstance().push(new message("[server::sendMessageToDiscordChatHistory][ErrorSystem] " + e.getFullMessageError(), CL_ONLY_FILE_LOG));
-#endif // _DEBUG
-	}
-};

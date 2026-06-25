@@ -1265,44 +1265,7 @@ void channel::makeBotGMEventRoom(stRangeTime& _rt, std::vector< stReward > _rewa
 	}
 };
 
-bool channel::execSmartCalculatorCmd(player& _session, std::string& _msg, eTYPE_CALCULATOR_CMD _type) {
-	CHECK_SESSION_BEGIN("execSmartCalculatorCmd");
 
-	bool ret = false;
-
-	try {
-
-		BEGIN_FIND_ROOM(_session.m_pi.mi.sala_numero);
-
-		if (r == nullptr)
-			throw exception("[channel::execSmartCalculatorCmd][Error] player[UID=" + std::to_string(_session.m_pi.uid) + "] Channel[ID=" + std::to_string((unsigned short)m_ci.id)
-					+ "] tentou executar Smart Calculator Cmd " + (_session.m_pi.mi.sala_numero != -1 
-						? "na sala[NUMERO=" + std::to_string(_session.m_pi.mi.sala_numero) + "], mas ela nao existe." 
-						: "mas ele nao esta em nenhum sala."), STDA_MAKE_ERROR(STDA_ERROR_TYPE::CHANNEL, 2, 0));
-
-		// GM pode user ela nessas salas, menos no lounge
-		if (!_session.m_pi.m_cap.stBit.game_master && !_session.m_pi.m_cap.stBit.gm_normal || r->getInfo()->tipo == RoomInfo::TIPO::LOUNGE)
-			if (r->getInfo()->tipo == RoomInfo::TIPO::LOUNGE || r->getInfo()->tipo == RoomInfo::TIPO::GRAND_ZODIAC_PRACTICE || r->getInfo()->tipo == RoomInfo::TIPO::PRACTICE
-					|| (r->getInfo()->tipo == RoomInfo::TIPO::GRAND_PRIX 
-						&& sIff::getInstance().getGrandPrixAba(r->getInfo()->grand_prix.dados_typeid) == IFF::GrandPrixData::GP_ABA::ROOKIE 
-						&& sIff::getInstance().isGrandPrixNormal(r->getInfo()->grand_prix.dados_typeid)))
-				throw exception("[channel::execSmartCalculatorCmd][Error] player[UID=" + std::to_string(_session.m_pi.uid) + "] Channel[ID=" + std::to_string((unsigned short)m_ci.id)
-						+ "] tentou executar Smart Calculator Cmd na sala[NUMERO=" + std::to_string(_session.m_pi.mi.sala_numero) + ", TIPO=" + std::to_string((unsigned short)r->getInfo()->tipo)
-						+ "], mas ele nao pode executar esse comando nesse tipo de sala.", STDA_MAKE_ERROR(STDA_ERROR_TYPE::CHANNEL, 10000, 0));
-
-		ret = r->execSmartCalculatorCmd(_session, _msg, _type);
-
-		END_FIND_ROOM;
-
-	}catch (exception& e) {
-
-		_smp::message_pool::getInstance().push(new message("[channel::execSmartCalculatorCmd][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
-
-		ret = false;
-	}
-
-	return ret;
-};
 
 void channel::requestEnterLobby(player& _session, packet *_packet) {
 	REQUEST_BEGIN("EnterLobby");

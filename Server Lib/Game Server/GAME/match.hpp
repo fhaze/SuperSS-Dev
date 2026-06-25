@@ -49,9 +49,6 @@ namespace stdA {
 
 			virtual void requestTeamFinishHole(player& _session, packet* _packet) override;
 
-			// Smart Calculator Command
-			virtual stGameShotValue getGameShotValueToSmartCalculator(player& _session, unsigned char _club_index, unsigned char _power_shot_index) override;
-
 			// Tempo
 			virtual void startTime(void* _quem) override;
 			/*virtual void stopTime();

@@ -4956,29 +4956,7 @@ void room::requestExecCCGGoldenBell(player& _session, packet *_packet) {
 	}
 };
 
-bool room::execSmartCalculatorCmd(player& _session, std::string& _msg, eTYPE_CALCULATOR_CMD _type) {
-	CHECK_SESSION_BEGIN("execSmartCalculatorCmd");
 
-	bool ret = false;
-
-	try {
-
-		if (!isGaming())
-			throw exception("[room::execSmartCalculatorCmd][Error] Player[UID=" + std::to_string(_session.m_pi.uid) 
-					+ "] Channel[ID=" + std::to_string((unsigned short)m_channel_owner) + "] tentou executar Smart Calculator Command na sala[NUMERO=" 
-					+ std::to_string(m_ri.numero) + "], mas ele nao esta em jogo.", STDA_MAKE_ERROR(STDA_ERROR_TYPE::ROOM, 10000, 0));
-
-		ret = m_pGame->execSmartCalculatorCmd(_session, _msg, _type);
-
-	}catch (exception& e) {
-
-		_smp::message_pool::getInstance().push(new message("[room::execSmartCalculatorCmd][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
-
-		ret = false;
-	}
-
-	return ret;
-};
 
 unsigned char room::requestPlace(player& _session) {
 

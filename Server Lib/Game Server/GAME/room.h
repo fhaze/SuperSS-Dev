@@ -24,8 +24,6 @@
 #include "team.hpp"
 #include "guild_room_manager.hpp"
 
-#include "../../Projeto IOCP/TYPE/smart_calculator_type.hpp"
-
 #include <string>
 #include <map>
 
@@ -215,10 +213,7 @@ namespace stdA {
 			void requestExecCCGChangeWeather(player& _session, packet *_packet);
 			void requestExecCCGGoldenBell(player& _session, packet *_packet);
 
-			// Smart Calculator Command
-			virtual bool execSmartCalculatorCmd(player& _session, std::string& _msg, eTYPE_CALCULATOR_CMD _type);
-
-			// Pede o Hole que o player está, 
+			// Pede o Hole que o player está,
 			// se eles estiver jogando ou 0 se ele não está jogando
 			unsigned char requestPlace(player& _session);
 

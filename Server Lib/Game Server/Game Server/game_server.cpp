@@ -46,8 +46,6 @@
 #include "../GAME/bot_gm_event.hpp"
 #include "../GAME/premium_system.hpp"
 
-#include "../../Projeto IOCP/Smart Calculator/Smart Calculator.hpp"
-
 #include "../UTIL/map.hpp"
 
 #include "../../Projeto IOCP/PANGYA_DB/cmd_auth_key_game.hpp"
@@ -819,9 +817,6 @@ void game_server::clear() {
 
 	v_channel.clear();
 	v_channel.shrink_to_fit();
-
-	// Flag chat discord
-	m_chat_discord = false;
 };
 
 channel* game_server::enterChannel(player& _session, unsigned char _channel) {
@@ -1031,54 +1026,7 @@ LoginManager& game_server::getLoginManager() {
 	return m_login_manager;
 };
 
-void game_server::sendSmartCalculatorReplyToPlayer(const uint32_t _uid, std::string _from, std::string _msg) {
-
-	try {
-
-		auto player = findPlayer(_uid);
-
-		if (player == nullptr) {
-
-			_smp::message_pool::getInstance().push(new message("[game_server::sendSmartCalculatorReplyToPlayer][WARNING] Player[UID="
-					+ std::to_string(_uid) + "] nao esta mais online.", CL_FILE_LOG_AND_CONSOLE));
-
-			return;
-		}
-
-		auto reply = clearBreakLineAndTab(_msg);
-
-		auto v_msg = split(reply, "\n");
-
-		v_msg = limit_chat_display(v_msg, (80 - (uint32_t)strlen(player->m_pi.nickname)));
-
-		// Resposta para o que enviou a private message
-		packet p;
-
-		for (auto& el : v_msg) {
-
-			p.init_plain((unsigned short)0x84);
-
-			p.addUint8(1);	// TO
-
-			p.addString(_from);	// Nickname FROM
-			p.addString(el);
-
-#ifdef _DEBUG
-			// !@ Teste
-			//_smp::message_pool::getInstance().push(new message("[game_server::sendSmartCalculatorReplyToPlayer][Log] Message Line: " + hex_util::StringToHexString(el), CL_FILE_LOG_AND_CONSOLE));
-#endif // _DEBUG
-
-			packet_func::session_send(p, player, 1);
-		}
-
-	}catch (exception& e) {
-
-		_smp::message_pool::getInstance().push(new message("[game_server::sendSmartCalculatorReplyToPlayer][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
-	}
-}
-
 void game_server::sendNoticeGMFromDiscordCmd(std::string& _notice) {
-
 	try {
 
 		if (_notice.empty())
@@ -2183,18 +2131,9 @@ void game_server::requestChat(player& _session, packet *_packet) {
 				packet_func::pacote040(p, &_session, &_session.m_pi, msg, (_session.m_pi.m_cap.stBit.game_master/* & 4*/) ? 0x80 : 0);
 				packet_func::lobby_broadcast(*c, p, 0);
 			}
+			}
 
-			// Envia a mensagem para o discord chat log se estiver ativado
-
-			// Verifica se o m_chat_discod flag está ativo para enviar o chat para o discord
-			if (m_si.rate.smart_calculator && m_chat_discord)
-				sendMessageToDiscordChatHistory(
-					"[Channel=" + std::string(c->getInfo()->name) + ", ROOM=" + std::to_string(_session.m_pi.mi.sala_numero) + "]",		// From
-					std::string(_session.m_pi.nickname) + ": '" + msg + "'"																// Msg
-				);
-		}
-
-	}catch (exception& e) {
+		}catch (exception& e) {
 
 		_smp::message_pool::getInstance().push(new message("[game_server::requestChat][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
 
@@ -2582,13 +2521,6 @@ void game_server::requestPrivateMessage(player& _session, packet *_packet) {
 				+ nickname + "], mas message esta vazia. Hacker ou Bug", STDA_MAKE_ERROR(STDA_ERROR_TYPE::GAME_SERVER, 4, 5));
 
 		// Verifica se o player tem os itens necessários(PREMIUM USER OR GM) para usar essa função
-		if (nickname.compare("#SC") == 0 || nickname.compare("#CS") == 0) {
-
-			// Só sai do Private message se for comando do Smart Calculator, se não faz as outras verificações para enviar o PM
-			if (m_si.rate.smart_calculator && checkSmartCalculatorCmd(_session, msg, (nickname.compare("#SC") == 0 ? eTYPE_CALCULATOR_CMD::SMART_CALCULATOR : eTYPE_CALCULATOR_CMD::CALCULATOR_STADIUM)))
-				return;
-		}
-
 		s = reinterpret_cast< player* >(m_session_manager.findSessionByNickname(nickname));
 
 		if (s == nullptr || !s->getState() || !s->isConnected())
@@ -2652,15 +2584,6 @@ void game_server::requestPrivateMessage(player& _session, packet *_packet) {
 		p.addString(msg);
 
 		packet_func::session_send(p, s, 1);
-
-		// Envia a mensagem para o Chat History do discord se ele estiver ativo
-		
-		// Verifica se o m_chat_discod flag está ativo para enviar o chat para o discord
-		if (m_si.rate.smart_calculator && m_chat_discord)
-			sendMessageToDiscordChatHistory(
-				"[PM]",																												// From
-				std::string(_session.m_pi.nickname) + ">" + std::string(s->m_pi.nickname) + ": '" + msg + "'"						// Msg
-			);
 
 	}catch (exception& e) {
 
@@ -4289,10 +4212,6 @@ void game_server::onDisconnected(session *_session) {
 	// Register Player Logon ON DB, 0 Login, 1 Logout
 	snmdb::NormalManagerDB::getInstance().add(5, new CmdRegisterLogon(_player->m_pi.uid, 1/*Logout*/), game_server::SQLDBResponse, this);
 
-	// Remove o Context do player se tiver no Smart Calculator
-	if (m_si.rate.smart_calculator)
-		sSmartCalculator::getInstance().removeAllPlayerCtx(_player->m_pi.uid);
-
 };
 
 void game_server::onHeartBeat() {
@@ -4373,10 +4292,6 @@ void game_server::onHeartBeat() {
 		// Login Reward System
 		if (!sLoginRewardSystem::getInstance().isLoad())
 			sLoginRewardSystem::getInstance().load();
-
-		// Carrega Smart Calculator Lib, Só inicializa se ele estiver ativado
-		if (m_si.rate.smart_calculator && !sSmartCalculator::getInstance().hasStopped() && !sSmartCalculator::getInstance().isLoad())
-			sSmartCalculator::getInstance().load();
 
 		// End Check System Singleton Static
 
@@ -4675,43 +4590,6 @@ bool game_server::checkCommand(std::stringstream& _command) {
 		else
 			_smp::message_pool::getInstance().push(new message("[game_server::checkCommand][Error] Unknown Command: \"reload_system " + sTipo + "\"", CL_ONLY_CONSOLE));
 	
-	}else if (!s.empty() && s.compare("smart_calc") == 0) {
-
-		std::string sTipo = "";
-
-		_command >> sTipo;
-
-		if (!sTipo.empty()) {
-
-			if (m_si.rate.smart_calculator) {
-
-				if (sTipo.compare("reload") == 0)
-					sSmartCalculator::getInstance().load(); // Recarrega
-				else if (sTipo.compare("close") == 0) {
-
-					// Set Flag stopped para não reiniciar sozinho no onHearBeat
-					sSmartCalculator::getInstance().setStop(true);
-
-					sSmartCalculator::getInstance().close(); // Fecha
-
-				}else if (sTipo.compare("start") == 0)
-					sSmartCalculator::getInstance().load(); // Inicia(Load)
-				else if (sTipo.compare("chat_discord") == 0) {
-
-					m_chat_discord = !m_chat_discord;
-
-					// Log
-					_smp::message_pool::getInstance().push(new message("[game_server::checkCommand][Log] Chat Discord Flag agora esta " + std::string(m_chat_discord ? "Ativado" : "Desativado"), CL_ONLY_CONSOLE));
-				
-				}else
-					_smp::message_pool::getInstance().push(new message("[game_server::checkCommand][Error] Unknown Command: \"smart_calc " + sTipo + "\"", CL_ONLY_CONSOLE));
-			
-			}else
-				_smp::message_pool::getInstance().push(new message("[game_server::checkCommand][Error] Smart Calculator not active, exec Command Event smart_calc to active it.", CL_ONLY_CONSOLE));
-
-		}else
-			_smp::message_pool::getInstance().push(new message("[game_server::checkCommand][Error] Unknown Command: \"smart_calc " + sTipo + "\"", CL_ONLY_CONSOLE));
-
 	}else if (!s.empty() && s.compare("snapshot") == 0) {
 
 		try {
@@ -5191,10 +5069,6 @@ void game_server::reload_systems() {
 
 	// Recarrega Bot GM Event
 	sBotGMEvent::getInstance().load();
-
-	// Recarrega Smart Calculator Lib, só recarrega se ele estiver ativado
-	if (m_si.rate.smart_calculator)
-		sSmartCalculator::getInstance().load();
 };
 
 void game_server::reloadGlobalSystem(uint32_t _tipo) {
@@ -5272,10 +5146,6 @@ void game_server::reloadGlobalSystem(uint32_t _tipo) {
 		case 17:	// Bot GM Event
 			// Recarrega Bot GM Event
 			sBotGMEvent::getInstance().load();
-			break;
-		case 18:	// Smart Calculator Lib
-			// Recarrega Smart Calculator Lib
-			sSmartCalculator::getInstance().load();
 			break;
 		default:
 			throw exception("[game_server::reloadGlobalSystem][Error] Tipo[VALUE=" + std::to_string(_tipo) + "] desconhecido.", STDA_MAKE_ERROR(STDA_ERROR_TYPE::GAME_SERVER, 400, 0));
@@ -5372,16 +5242,6 @@ void game_server::updateRateAndEvent(uint32_t _tipo, uint32_t _qntd) {
 			if (m_si.rate.bot_gm_event)
 				reloadGlobalSystem(17/*Bot GM Event*/);
 			
-			break;
-		}
-		case 15: // Smart Calculator
-		{
-			m_si.rate.smart_calculator = (short)_qntd;
-
-			// Recarrega o Smart Calculator System se ele foi ativado
-			if (m_si.rate.smart_calculator)
-				reloadGlobalSystem(18/*Smart Calculator*/);
-
 			break;
 		}
 		default:
@@ -6029,62 +5889,6 @@ void game_server::makeBotGMEventRoom() {
 
 		_smp::message_pool::getInstance().push(new message("[game_server::makeBotGMEventRoom][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
 	}
-};
-
-bool game_server::checkSmartCalculatorCmd(player& _session, std::string& _msg, eTYPE_CALCULATOR_CMD _type) {
-	CHECK_SESSION_BEGIN("checkSmartCalculatorCmd");
-
-	bool ret = false;
-
-	try {
-
-		// Verifica se o Smart Calculator System está ativo
-		if (!m_si.rate.smart_calculator)
-			throw exception("[game_server::checkSmartCalculatorCmd][Error] Player[UID=" + std::to_string(_session.m_pi.uid)
-					+ "] Smart Calculator esta desativado.", STDA_MAKE_ERROR(STDA_ERROR_TYPE::GAME_SERVER, 100002, 0));
-
-		// Verifica a permisão para usar o Smart Calculator
-		if (!_session.m_pi.m_cap.stBit.game_master && !_session.m_pi.m_cap.stBit.gm_normal 
-				&& (!_session.m_pi.m_cap.stBit.premium_user || (_type == eTYPE_CALCULATOR_CMD::SMART_CALCULATOR && !sPremiumSystem::getInstance().isPremium2(_session.m_pi.pt._typeid))
-					|| (_type == eTYPE_CALCULATOR_CMD::CALCULATOR_STADIUM && !sPremiumSystem::getInstance().isPremiumTicket(_session.m_pi.pt._typeid))))
-			throw exception("[game_server::checkSmartCalculatorCmd][Error] Player[UID=" + std::to_string(_session.m_pi.uid)
-					+ "] nao tem permissao para executar esse comando.", STDA_MAKE_ERROR(STDA_ERROR_TYPE::GAME_SERVER, 10000, 0));
-
-		auto c = findChannel(_session.m_pi.channel);
-
-		if (c == nullptr)
-			throw exception("[game_server::checkSmartCalculatorCmd][Error] Player[UID=" + std::to_string(_session.m_pi.uid) 
-					+ "] nao esta em nenhum canal.", STDA_MAKE_ERROR(STDA_ERROR_TYPE::GAME_SERVER, 10001, 0));
-
-		ret = c->execSmartCalculatorCmd(_session, _msg, _type);
-
-		// Teste debug
-#ifdef _DEBUG
-		if (!ret) {
-
-			auto ctx = sSmartCalculator::getInstance().getPlayerCtx(_session.m_pi.uid, eTYPE_CALCULATOR_CMD::SMART_CALCULATOR);
-
-			if (ctx == nullptr)
-				ctx = sSmartCalculator::getInstance().makePlayerCtx(_session.m_pi.uid, eTYPE_CALCULATOR_CMD::SMART_CALCULATOR);
-
-			sSmartCalculator::getInstance().checkCommand(_session.m_pi.uid, _msg, eTYPE_CALCULATOR_CMD::SMART_CALCULATOR);
-
-			ret = true;
-
-			// Log
-			_smp::message_pool::getInstance().push(new message("[game_server::checkSmartCalculatorCmd][Log] Player[UID="
-					+ std::to_string(_session.m_pi.uid) + "] mandou o comando(" + _msg + ") para o Smart Calculator.", CL_FILE_LOG_AND_CONSOLE));
-		}
-#endif // _DEBUG
-
-	}catch (exception& e) {
-
-		_smp::message_pool::getInstance().push(new message("[game_server::checkSmartCalculatorCmd][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
-
-		ret = false;
-	}
-
-	return ret;
 };
 
 void game_server::destroyRoom(unsigned char _channel_owner, short _number) {
