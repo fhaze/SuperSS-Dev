@@ -6044,9 +6044,10 @@ void game_server::SQLDBResponse(uint32_t _msg_id, pangya_db& _pangya_db, void* _
 	case 42:	// Get Notice Queue from DB (webapp-sent notices)
 	{
 		auto cmd_gnq = reinterpret_cast<CmdGetNoticeQueue*>(&_pangya_db);
+		auto gs = reinterpret_cast<game_server*>(_arg);
 
 		for (auto& entry : cmd_gnq->getNotices()) {
-			sendNoticeGMFromDiscordCmd(entry.message);
+			gs->sendNoticeGMFromDiscordCmd(entry.message);
 		}
 
 		break;
