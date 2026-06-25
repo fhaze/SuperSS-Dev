@@ -78,8 +78,8 @@ namespace packet_logger {
         const char* ip_str = (ip && ip[0]) ? ip : "";
 
         // Build command argv
-        const char* argv[20];
-        size_t argvlen[20];
+        const char* argv[24];
+        size_t argvlen[24];
         int argc = 0;
 
         #define ADD(s) argv[argc] = (s); argvlen[argc] = strlen(s); argc++;
@@ -87,7 +87,8 @@ namespace packet_logger {
         ADD("XADD");
         ADD("pangya:packets");
         ADD("MAXLEN");
-        ADD("~5000");
+        ADD("~");
+        ADD("5000");
         ADD("*");
         ADD("dir");    ADD(dir);
         ADD("srv");    ADD(srv);
