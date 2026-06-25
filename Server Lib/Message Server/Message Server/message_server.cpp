@@ -694,16 +694,6 @@ void message_server::requestChatFriend(player& _session, packet *_packet) {
 
 		packet_func::session_send(p, s, 1);		// TO
 
-		// ------------------------------- Chat History Discord ------------------------------------
-		// Envia a mensagem para o discord chat log se estiver ativado
-
-		// Verifica se o m_chat_discod flag est� ativo para enviar o chat para o discord
-		if (m_si.rate.smart_calculator && m_chat_discord)
-			sendMessageToDiscordChatHistory(
-				"[MSN->PM]",																										// From
-				std::string(_session.m_pi.nickname) + ">" + std::string(s->m_pi.nickname) + ": '" + msg + "'"						// Msg
-			);
-
 	}catch (exception& e) {
 
 		_smp::message_pool::getInstance().push(new message("[message_server::requestChatFriend][ErrorSystem] " + e.getFullMessageError() , CL_FILE_LOG_AND_CONSOLE));
@@ -794,19 +784,9 @@ void message_server::requestChatGuild(player& _session, packet *_packet) {
 		packet_func::friend_broadcast(m_player_manager.findAllGuildMember(_session.m_pi.guild_uid), p, &_session, 1);	// All GUILD MEMBER
 		//packet_func::friend_broadcast(m_player_manager.findAllFriend(_session.m_pi.m_friend_manager.getAllGuildMember()), p, &_session, 1);	// ALL GUILD MEMBER
 
-		// ------------------------------- Chat History Discord ------------------------------------
-		// Envia a mensagem para o discord chat log se estiver ativado
+		}catch (exception& e) {
 
-		// Verifica se o m_chat_discod flag est� ativo para enviar o chat para o discord
-		if (m_si.rate.smart_calculator && m_chat_discord)
-			sendMessageToDiscordChatHistory(
-				"[CC]",																												// From
-				"[" + std::string(_session.m_pi.guild_name) + "]>" + std::string(_session.m_pi.nickname) + ": '" + msg + "'"		// Msg
-			);
-
-	}catch (exception& e) {
-
-		_smp::message_pool::getInstance().push(new message("[message_server::requestChatGuild][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
+			_smp::message_pool::getInstance().push(new message("[message_server::requestChatGuild][ErrorSystem] " + e.getFullMessageError(), CL_FILE_LOG_AND_CONSOLE));
 
 		p.init_plain((unsigned short)0x30);
 
@@ -2993,12 +2973,6 @@ void message_server::onHeartBeat() {
 		if (m_state != INITIALIZED)
 			return;
 
-		// Begin Check System Singleton Static
-
-		// Carrega Smart Calculator Lib, S� inicializa se ele estiver ativado
-		if (m_si.rate.smart_calculator && !sSmartCalculator::getInstance().hasStopped() && !sSmartCalculator::getInstance().isLoad())
-			sSmartCalculator::getInstance().load();
-
 		// End Check System Singleton Static
 
 	}catch (exception& e) {
@@ -3042,43 +3016,6 @@ bool message_server::checkCommand(std::stringstream& _command) {
 			m_accept_sock->reload_config_file();
 		else
 			_smp::message_pool::getInstance().push(new message("[message_server::checkCommand][WARNING] m_accept_sock(socket que gerencia os socket que pode aceitar etc) is invalid.", CL_FILE_LOG_AND_CONSOLE));
-
-	}else if (!s.empty() && s.compare("smart_calc") == 0) {
-
-		std::string sTipo = "";
-
-		_command >> sTipo;
-
-		if (!sTipo.empty()) {
-
-			if (m_si.rate.smart_calculator) {
-
-				if (sTipo.compare("reload") == 0)
-					sSmartCalculator::getInstance().load(); // Recarrega
-				else if (sTipo.compare("close") == 0) {
-
-					// Set Flag stopped para n�o reiniciar sozinho no onHearBeat
-					sSmartCalculator::getInstance().setStop(true);
-
-					sSmartCalculator::getInstance().close(); // Fecha
-
-				}else if (sTipo.compare("start") == 0)
-					sSmartCalculator::getInstance().load(); // Inicia(Load)
-				else if (sTipo.compare("chat_discord") == 0) {
-
-					m_chat_discord = !m_chat_discord;
-
-					// Log
-					_smp::message_pool::getInstance().push(new message("[message_server::checkCommand][Log] Chat Discord Flag agora esta " + std::string(m_chat_discord ? "Ativado" : "Desativado"), CL_ONLY_CONSOLE));
-				
-				}else
-					_smp::message_pool::getInstance().push(new message("[message_server::checkCommand][Error] Unknown Command: \"smart_calc " + sTipo + "\"", CL_ONLY_CONSOLE));
-			
-			}else
-				_smp::message_pool::getInstance().push(new message("[message_server::checkCommand][Error] Smart Calculator not active, exec Command Event smart_calc to active it.", CL_ONLY_CONSOLE));
-
-		}else
-			_smp::message_pool::getInstance().push(new message("[message_server::checkCommand][Error] Unknown Command: \"smart_calc " + sTipo + "\"", CL_ONLY_CONSOLE));
 
 	}else if (!s.empty() && s.compare("snapshot") == 0) {
 
@@ -3273,9 +3210,7 @@ void message_server::reload_systems() {
 	// Recarrega IFF_STRUCT
 	sIff::getInstance().load();
 
-	// Recarrega Smart Calculator Lib, s� recarrega se ele estiver ativado
-	if (m_si.rate.smart_calculator)
-		sSmartCalculator::getInstance().load();
+	// Smart Calculator removed
 }
 
 void message_server::reloadGlobalSystem(uint32_t _tipo) {
@@ -3308,9 +3243,7 @@ void message_server::reloadGlobalSystem(uint32_t _tipo) {
 		case 17:	// Bot GM Event
 			// N�o tem esses Systemas aqui
 			break;
-		case 18:	// Smart Calculator Lib
-			// Recarrega Smart Calculator Lib
-			sSmartCalculator::getInstance().load();
+		case 18:	// Smart Calculator Lib (removed)
 			break;
 		default:
 			throw exception("[message_server::reloadGlobalSystem][Error] Tipo[VALUE=" + std::to_string(_tipo) + "] desconhecido.", STDA_MAKE_ERROR(STDA_ERROR_TYPE::MESSAGE_SERVER, 400, 0));
