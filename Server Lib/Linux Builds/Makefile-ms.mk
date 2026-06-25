@@ -86,7 +86,6 @@ CFILES := \
 	../Projeto|IOCP/Server/server.cpp \
 	../Projeto|IOCP/THREAD|POOL/threadpl_server.cpp \
 	../Projeto|IOCP/UTIL/iff.cpp \
-	../Projeto|IOCP/Smart|Calculator/Smart|Calculator.cpp \
 	../Projeto|IOCP/UNIT/unit_connect.cpp \
 	../Projeto|IOCP/UNIT/unit_auth_server_connect.cpp \
 	../Projeto|IOCP/SOCKET/session_manager.cpp \

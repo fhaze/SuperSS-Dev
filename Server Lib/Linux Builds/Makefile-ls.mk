@@ -84,7 +84,6 @@ CFILES := \
 	../Projeto|IOCP/SOCKET/session_manager.cpp \
 	../Projeto|IOCP/PACKET/packet_func.cpp \
 	../Projeto|IOCP/UTIL/func_arr.cpp \
-	../Projeto|IOCP/Smart|Calculator/Smart|Calculator.cpp \
 	../Projeto|IOCP/DATABASE/exec_query.cpp \
 	../Projeto|IOCP/DATABASE/database.cpp \
 	../Projeto|IOCP/UNIT/unit_auth_server_connect.cpp \

@@ -89,7 +89,6 @@ CFILES := \
 	../Projeto|IOCP/SOCKET/session_manager.cpp \
 	../Projeto|IOCP/UNIT/unit_connect.cpp \
 	../Projeto|IOCP/UNIT/unit_auth_server_connect.cpp \
-	../Projeto|IOCP/Smart|Calculator/Smart|Calculator.cpp \
 	../Game|Server/SESSION/player.cpp \
 	../Game|Server/SESSION/player_manager.cpp \
 	../Game|Server/PACKET/packet_func_sv.cpp \

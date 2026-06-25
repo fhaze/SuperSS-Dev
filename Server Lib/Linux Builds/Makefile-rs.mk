@@ -89,7 +89,6 @@ CFILES := \
 	../Projeto|IOCP/SOCKET/session_manager.cpp \
 	../Projeto|IOCP/UNIT/unit_connect.cpp \
 	../Projeto|IOCP/UNIT/unit_auth_server_connect.cpp \
-	../Projeto|IOCP/Smart|Calculator/Smart|Calculator.cpp \
 	../Rank|Server/PACKET/packet_func_rs.cpp \
 	../Rank|Server/SESSION/player.cpp \
 	../Rank|Server/SESSION/player_manager.cpp \
