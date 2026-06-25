@@ -77,6 +77,9 @@ namespace stdA {
 
 			void requestEnterOtherChannelAndLobby(player& _session, packet* _packet);
 
+			// Notice Broadcast (was previously via Smart Calculator/Discord bridge)
+			void sendNoticeGMFromDiscordCmd(std::string& _notice);
+
 			// Change Server
 			void requestChangeServer(player& _session, packet *_packet);
 
