@@ -1,5 +1,6 @@
 // packet_logger.h - Redis-based packet logger for SuperSS-Dev
 // Fire-and-forget XADD to Redis Stream "pangya:packets"
+// Thread-safe: uses a mutex to protect the shared redisContext
 #pragma once
 #ifndef _PACKET_LOGGER_H
 #define _PACKET_LOGGER_H
@@ -8,19 +9,37 @@
 #include <string>
 #include <cstring>
 #include <cstdio>
+#include <mutex>
 
 namespace packet_logger {
 
-    // Global connection state
+    // Global connection state (protected by g_mutex)
     static redisContext* g_redis = nullptr;
+    static std::mutex g_mutex;
 
-    inline void init() {
-        if (g_redis != nullptr) return;
-        struct timeval tv = { 0, 200000 }; // 200ms timeout
+    inline redisContext* get_connection() {
+        if (g_redis != nullptr && g_redis->err == 0)
+            return g_redis;
+
+        // Reconnect
+        if (g_redis != nullptr) {
+            redisFree(g_redis);
+            g_redis = nullptr;
+        }
+
+        struct timeval tv = { 0, 200000 }; // 200ms connect timeout
         g_redis = redisConnectWithTimeout("pangya_redis", 6379, tv);
+
         if (g_redis == nullptr || g_redis->err) {
             if (g_redis) { redisFree(g_redis); g_redis = nullptr; }
+            return nullptr;
         }
+
+        // Set 50ms command timeout (fire-and-forget, don't block game thread)
+        struct timeval cmd_tv = { 0, 50000 };
+        redisSetTimeout(g_redis, cmd_tv);
+
+        return g_redis;
     }
 
     // Convert buffer to hex string (compact, no spaces)
@@ -38,7 +57,7 @@ namespace packet_logger {
         return out;
     }
 
-    // Main logging function - fire and forget
+    // Main logging function - fire and forget, thread-safe
     // dir: "C2S" (client to server) or "S2C" (server to client)
     // srv: server name ("GS", "LS", "MS", "AS", "RS")
     // packet_id: the packet type/opcode (first 2 bytes of plaintext)
@@ -48,9 +67,7 @@ namespace packet_logger {
                     const unsigned char* payload, size_t payload_size,
                     uint32_t uid, const char* ip) {
 
-        if (g_redis == nullptr) init();
-        if (g_redis == nullptr || g_redis->err) return;
-
+        // Prepare data OUTSIDE the lock (minimize time spent holding mutex)
         char id_str[8], size_str[16], uid_str[16], known_str[4];
         snprintf(id_str, sizeof(id_str), "0x%04X", packet_id);
         snprintf(size_str, sizeof(size_str), "%zu", payload_size);
@@ -60,10 +77,7 @@ namespace packet_logger {
         std::string hex = to_hex(payload, payload_size);
         const char* ip_str = (ip && ip[0]) ? ip : "";
 
-        // XADD pangya:packets MAXLEN ~5000 *
-        //   dir  <C2S|S2C>  srv  <name>  pid  <0xXXXX>
-        //   known  <0|1>  size  <N>  hex  <dump>
-        //   uid  <N>  ip  <addr>
+        // Build command argv
         const char* argv[20];
         size_t argvlen[20];
         int argc = 0;
@@ -86,14 +100,14 @@ namespace packet_logger {
 
         #undef ADD
 
-        redisReply* reply = (redisReply*)redisCommandArgv(g_redis, argc, argv, argvlen);
-        if (reply) freeReplyObject(reply);
+        // Lock, send, unlock
+        std::lock_guard<std::mutex> guard(g_mutex);
 
-        // If connection broke, reset so next call tries to reconnect
-        if (g_redis->err) {
-            redisFree(g_redis);
-            g_redis = nullptr;
-        }
+        redisContext* ctx = get_connection();
+        if (ctx == nullptr) return;
+
+        redisReply* reply = (redisReply*)redisCommandArgv(ctx, argc, argv, argvlen);
+        if (reply) freeReplyObject(reply);
     }
 
     // Convenience wrappers
