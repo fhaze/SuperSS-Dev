@@ -69,6 +69,7 @@
 #include "../PANGYA_DB/cmd_guild_info.hpp"
 #include "../PANGYA_DB/cmd_insert_msg_off.hpp"
 #include "../PANGYA_DB/cmd_insert_ticker.hpp"
+#include "../PANGYA_DB/cmd_get_notice_queue.hpp"
 #include "../PANGYA_DB/cmd_mail_box_info.hpp"
 #include "../PANGYA_DB/cmd_register_logon_server.hpp"
 
@@ -4329,6 +4330,13 @@ void game_server::onHeartBeat() {
 		}
 		// End Check Treasure Hunter
 		
+		// Poll notice_queue table for webapp-sent notices
+		static auto last_notice_poll = std::time(nullptr);
+		if (std::time(nullptr) - last_notice_poll >= 2) {  // Every 2 seconds
+			last_notice_poll = std::time(nullptr);
+			snmdb::NormalManagerDB::getInstance().add(42, new CmdGetNoticeQueue(), game_server::SQLDBResponse, this);
+		}
+
 		// Check Notice (GM or Cube Win Rare)
 		BroadcastList::RetNoticeCtx rt;
 
@@ -6030,6 +6038,16 @@ void game_server::SQLDBResponse(uint32_t _msg_id, pangya_db& _pangya_db, void* _
 #else
 		_smp::message_pool::getInstance().push(new message("[game_server::SQLDBResponse][Log] Inseriu Block MAC[ADDRESS=" + cmd_ibm->getMACAddress() + "] com sucesso.", CL_ONLY_FILE_LOG));
 #endif // _DEBUG
+
+		break;
+	}
+	case 42:	// Get Notice Queue from DB (webapp-sent notices)
+	{
+		auto cmd_gnq = reinterpret_cast<CmdGetNoticeQueue*>(&_pangya_db);
+
+		for (auto& entry : cmd_gnq->getNotices()) {
+			sendNoticeGMFromDiscordCmd(entry.message);
+		}
 
 		break;
 	}

@@ -186,6 +186,7 @@ CFILES := \
 	../Game|Server/PANGYA_DB/cmd_insert_papel_shop_rare_win_log.cpp \
 	../Game|Server/PANGYA_DB/cmd_insert_spinning_cube_super_rare_win_broadcast.cpp \
 	../Game|Server/PANGYA_DB/cmd_insert_ticker.cpp \
+	../Game|Server/PANGYA_DB/cmd_get_notice_queue.cpp \
 	../Game|Server/PANGYA_DB/cmd_insert_ticket_report_data.cpp \
 	../Game|Server/PANGYA_DB/cmd_insert_ticket_report.cpp \
 	../Game|Server/PANGYA_DB/cmd_item_buff_info.cpp \
