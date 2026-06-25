@@ -13,9 +13,9 @@ CmdGetNoticeQueue::~CmdGetNoticeQueue() {
 
 void CmdGetNoticeQueue::lineResult(result_set::ctx_res* _result, uint32_t /*_index_result*/) {
 	NoticeQueueEntry entry;
-	entry.id = IFNULL(atoi, _result->at(0));
-	if (_result->at(1) != nullptr)
-		entry.message = _result->at(1);
+	entry.id = IFNULL(atoi, _result->data[0]);
+	if (_result->data[1] != nullptr)
+		entry.message = _result->data[1];
 	m_notices.push_back(entry);
 }
 
