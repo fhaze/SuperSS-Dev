@@ -28,7 +28,7 @@ endif
 CXXFLAGS := $(CURRENT_CXXFLAGS) -fpermissive -fsigned-char -std=c++20 `pkg-config --cflags glib-2.0`
 
 # /usr/lib/x86_64-linux-gnu/libglib-2.0.so.0.6400.6 /usr/lib/libmsodbcsql-17.so
-CXXLINK := -pthread -lg -ldl `pkg-config --libs libzip` `pkg-config --libs mysqlclient` -lodbc -lcrypto `pkg-config --libs glib-2.0`
+CXXLINK := -pthread -lg -ldl `pkg-config --libs libzip` `pkg-config --libs mysqlclient` -lodbc -lcrypto `pkg-config --libs glib-2.0` -lhiredis
 
 # set library static owner to check modify and recompile program
 #LIBSTATIC := testlib.a
