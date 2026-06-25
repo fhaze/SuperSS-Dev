@@ -17,6 +17,7 @@
 #include "../../Projeto IOCP/PACKET/packet_func.h"
 #include "../TYPE/pangya_game_st.h"
 #include "../../Projeto IOCP/PACKET/packet.h"
+#include "../../Projeto IOCP/UTIL/packet_logger.h"
 #include "../GAME/channel.h"
 #include <string>
 #include <vector>

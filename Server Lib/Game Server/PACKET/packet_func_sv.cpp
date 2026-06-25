@@ -78,7 +78,8 @@
 #include "../PANGYA_DB/cmd_check_achievement.hpp"
 
 #define MAKE_SEND_BUFFER(_packet, _session) (_packet).makeFull((_session)->m_key); \
-						 WSABUF mb = (_packet).getMakedBuf(); \
+						packet_logger::log_send((_packet).getTipo(), (_packet).getBuffer(), (_packet).getSize(), (_session)->getUID(), (_session)->m_ip, "GS"); \
+					 WSABUF mb = (_packet).getMakedBuf(); \
 						 try { \
 							\
 							(_session)->usa(); \

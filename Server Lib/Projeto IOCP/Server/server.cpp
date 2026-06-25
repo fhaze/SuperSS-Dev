@@ -40,6 +40,8 @@
 #include "../../Projeto IOCP/PANGYA_DB/cmd_list_ip_ban.hpp"
 #include "../../Projeto IOCP/PANGYA_DB/cmd_list_mac_ban.hpp"
 
+#include "../UTIL/packet_logger.h"
+
 #if defined(_WIN32)
 #include <conio.h>
 
@@ -1583,7 +1585,8 @@ inline void server::dispach_packet_same_thread(session& _session, packet *_packe
 #endif
 
 			// Já tem quase todos pacotes sendo tratados, se o cliente mandar um pacote desconhecido derruba ele
-			DisconnectSession(&_session);
+			// PATCH: Log unknown packet to Redis instead of disconnecting
+			packet_logger::log_recv(_packet->getTipo(), false, _packet->getBuffer(), _packet->getSize(), _session.getUID(), _session.m_ip, "GS");
 
 			// Trata o erro aqui
 			// e desloga a session que enviou pacote errado
@@ -1592,8 +1595,8 @@ inline void server::dispach_packet_same_thread(session& _session, packet *_packe
 		}else
 			DisconnectSession(&_session);
 
-		// Relança exception
-		throw;
+		// Relança exception -- PATCH: commented out for unknown packets, let client continue
+		// throw;
 	}
 
 	try {
@@ -1604,6 +1607,9 @@ inline void server::dispach_packet_same_thread(session& _session, packet *_packe
 		_session.m_tick = std::clock();	// Tick time client para o TTL(time to live)
 
 		ParamDispatch pd = { *(player*)&_session, _packet };
+
+		// Redis: log received packet (decrypted plaintext) to pangya:packets stream
+		packet_logger::log_recv(_packet->getTipo(), true, _packet->getBuffer(), _packet->getSize(), _session.getUID(), _session.m_ip, "GS");
 
 		if (checkPacket(_session, _packet)/*Check Packet*/) {
 			/*_session.m_check_packet.tick = std::clock();
