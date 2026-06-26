@@ -14,6 +14,7 @@
 #include "../../Projeto IOCP/UTIL/exception.h"
 #include "../../Projeto IOCP/TYPE/stda_error.h"
 #include "../../Projeto IOCP/UTIL/message_pool.h"
+#include "../../Projeto IOCP/UTIL/packet_logger.h"
 
 #include "../PACKET/packet_func_sv.h"
 
@@ -2648,6 +2649,10 @@ void Game::requestReadSyncShotData(player& _session, packet *_packet, ShotSyncDa
 
 		// Decrypt Packet Dados, que esse o cliente encripta com a chave segura da sala
 		DECRYPT16((unsigned char*)&_ssd, sizeof(_ssd), m_ri.key);
+
+		// Log decrypted sync shot data to Redis
+		packet_logger::log_recv(0x001B, true, (unsigned char*)&_ssd, sizeof(_ssd),
+			_session.m_pi.uid, _session.m_ip, "GS");
 
 		if (_ssd.pang > 40000u)
 			_smp::message_pool::getInstance().push(new message("[Game::requestReadSyncShotDate][WARNING] player[UID=" + std::to_string(_session.m_pi.uid) 
