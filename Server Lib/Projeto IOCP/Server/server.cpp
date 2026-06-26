@@ -1608,8 +1608,10 @@ inline void server::dispach_packet_same_thread(session& _session, packet *_packe
 
 		ParamDispatch pd = { *(player*)&_session, _packet };
 
-		// Redis: log received packet (decrypted plaintext) to pangya:packets stream
-		packet_logger::log_recv(_packet->getTipo(), true, _packet->getBuffer(), _packet->getSize(), _session.getUID(), _session.m_ip, "GS");
+		// Redis: log received packet to pangya:packets stream
+		// Skip 0x001B — encrypted here, logged decrypted in handler
+		if (_packet->getTipo() != 0x001B)
+			packet_logger::log_recv(_packet->getTipo(), true, _packet->getBuffer(), _packet->getSize(), _session.getUID(), _session.m_ip, "GS");
 
 		if (checkPacket(_session, _packet)/*Check Packet*/) {
 			/*_session.m_check_packet.tick = std::clock();
