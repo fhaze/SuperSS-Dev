@@ -158,16 +158,6 @@ pub async fn handle_game_login(
             game_resp::build_warehouse_list(&warehouse),
             game_resp::build_mascot_list(&mascots),
             game_resp::build_user_equip(&equip),
-            // The remaining sendCompleteData packets — simple acks the client
-            // expects before it fully initializes. Without these the client's
-            // room UI may stay partially disabled (course select grayed).
-            game_resp::build_simple_ack_1byte(0x102, 0), // Gacha coupons (empty)
-            game_resp::build_simple_ack_1byte(0xF1, 0),  // option ack
-            game_resp::build_simple_ack_1byte(0x144, 0), // Mail info (JP)
-            game_resp::build_simple_ack_0byte(0x135),    // bare ack
-            game_resp::build_simple_ack_0byte(0x136),    // bare ack
-            game_resp::build_simple_ack_1byte(0x13F, 0), // option ack
-            game_resp::build_simple_ack_0byte(0x96),     // cookie (u64 = 0)
             game_resp::build_channel_list(&channel_wires),
         ],
         equipment: Box::new(PlayerEquipment {
