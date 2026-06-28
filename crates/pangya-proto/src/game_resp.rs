@@ -560,6 +560,16 @@ pub fn build_enter_lobby_ack() -> Vec<u8> {
     out
 }
 
+/// `0xF6` — exit multiplayer lobby ack. Mirrors `pacote0F6`: a bare opcode with
+/// no payload, sent in response to `0x0082` (requestExitLobby) by
+/// `leaveLobbyMultiPlayer`. Symmetric with the enter-lobby `0xF5`; without it the
+/// client errors when leaving the lobby.
+pub fn build_exit_lobby_ack() -> Vec<u8> {
+    let mut out = Vec::with_capacity(2);
+    write_opcode(0xF6, &mut out);
+    out
+}
+
 /// Serialize a `PlayerRoomInfo` as the packed wire struct. With `include_char`
 /// true, appends the full `CharacterInfo` (513 bytes) — the `PlayerRoomInfoEx`
 /// variant used by `0x48`. Without it, writes the 348-byte base struct.
@@ -770,6 +780,16 @@ pub fn build_make_room_result(option: i16, room: &RoomInfoWire) -> Vec<u8> {
     if option == 0 {
         write_room_info_full(&mut out, room);
     }
+    out
+}
+
+/// `0x4C` — leave/exit-room result. Mirrors `pacote04C`: `opcode(2) +
+/// option:i16`. Sent to the leaving player by `leaveRoomMultiPlayer` to confirm
+/// the exit (option `-1`); without it the client errors when closing a room.
+pub fn build_leave_room_result(option: i16) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4);
+    write_opcode(0x4C, &mut out);
+    out.extend_from_slice(&option.to_le_bytes());
     out
 }
 

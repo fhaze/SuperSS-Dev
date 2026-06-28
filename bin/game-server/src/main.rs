@@ -452,6 +452,47 @@ async fn handle_client(
                                 }
                             }
                         }
+                        0x0F => {
+                            // Exit/Close Room (requestExitRoom). Mirrors
+                            // leaveRoomMultiPlayer (channel.cpp:858): remove the
+                            // player; if the room empties it is destroyed and the
+                            // lobby is told (0x47 option 2). The leaving player is
+                            // then acked with 0x4C — without it the client errors
+                            // when closing a room. The request body (option:u8,
+                            // flag:i16, room_key[16]) is not needed server-side.
+                            if let (Some(u), Some(room_id)) = (uid, current_room) {
+                                // Snapshot the room before removal (for the
+                                // destroyed-room broadcast), then remove the player.
+                                let room = state.get_room(room_id);
+                                state.room_remove_player(room_id, u);
+                                let destroyed = state.get_room(room_id).is_none();
+
+                                // The player is back in the lobby (sala_numero = -1).
+                                let mut pci =
+                                    build_player_canal_info(uid, &nickname, &equipment);
+                                pci.sala_numero = -1;
+                                let player_update = game_resp::build_lobby_players(3, &[pci]);
+                                let _ = send_server(&player_update, sk, &mut write_half).await;
+
+                                // If the room emptied, tell the lobby to drop it.
+                                if destroyed {
+                                    if let Some(room) = room {
+                                        let wire = game_resp::RoomInfoWire::from_room(&room);
+                                        let list = game_resp::build_room_list(&[wire], 2);
+                                        if let Some(ch) = current_channel {
+                                            state.broadcast_channel(ch, &list).await;
+                                        }
+                                        let _ = send_server(&list, sk, &mut write_half).await;
+                                    }
+                                }
+
+                                // Confirm the exit to the leaving player.
+                                let ack = game_resp::build_leave_room_result(-1);
+                                let _ = send_server(&ack, sk, &mut write_half).await;
+                                current_room = None;
+                                info!("[{}] {peer}: exited room {room_id}", LOG_PREFIX);
+                            }
+                        }
                         0xFE => {
                             // Handshake confirm — client expects 0x1B1 response.
                             // Without this the client hangs after login.
@@ -552,6 +593,29 @@ async fn handle_client(
                             let _ = send_server(&rooms, sk, &mut write_half).await;
                             let ack = game_resp::build_enter_lobby_ack();
                             let _ = send_server(&ack, sk, &mut write_half).await;
+                        }
+                        0x82 => {
+                            // Exit multiplayer lobby (requestExitLobby). Mirrors
+                            // leaveLobbyMultiPlayer (channel.cpp:500): leave any
+                            // room, broadcast the player's updated state (0x46
+                            // option 2), then ack with 0xF6 — symmetric with the
+                            // enter-lobby 0x81 -> 0xF5. Without the 0xF6 the client
+                            // errors when leaving the lobby.
+                            if let Some(u) = uid {
+                                if let Some(room_id) = current_room {
+                                    state.room_remove_player(room_id, u);
+                                    current_room = None;
+                                }
+                                let pci =
+                                    build_player_canal_info(uid, &nickname, &equipment);
+                                let player_update = game_resp::build_lobby_players(2, &[pci]);
+                                if let Some(ch) = current_channel {
+                                    state.broadcast_channel(ch, &player_update).await;
+                                }
+                                let _ = send_server(&player_update, sk, &mut write_half).await;
+                                let ack = game_resp::build_exit_lobby_ack();
+                                let _ = send_server(&ack, sk, &mut write_half).await;
+                            }
                         }
                         0x16E => {
                             // Check Attendance Reward — respond with empty notice.
@@ -667,14 +731,14 @@ fn build_player_canal_info(
 #[derive(Debug)]
 enum RoomChange {
     Name(Vec<u8>),
-    Senha(Vec<u8>),
-    Tipo(u8),
+    Password(Vec<u8>),
+    RoomType(u8),
     Course(u8),
-    QntdHole(u8),
-    Modo(u8),
-    TempoVs(u32),
+    HoleCount(u8),
+    Mode(u8),
+    VsTime(u32),
     MaxPlayer(u8),
-    Artefato(u32),
+    Artifact(u32),
     Other,
 }
 
@@ -711,36 +775,37 @@ fn parse_change_room_info(b: &[u8]) -> Option<Vec<RoomChange>> {
     let num = u8at(b, &mut p)?;
     let mut out = Vec::with_capacity(num as usize);
     for _ in 0..num {
+        // Indices match the C++ `RoomInfo::INFO_CHANGE` enum order.
         let change = match u8at(b, &mut p)? {
-            0 => RoomChange::Name(lp(b, &mut p)?),                  // NAME
-            1 => RoomChange::Senha(lp(b, &mut p)?),                 // SENHA
-            2 => RoomChange::Tipo(u8at(b, &mut p)?),               // TIPO
-            3 => RoomChange::Course(u8at(b, &mut p)?),             // COURSE
-            4 => RoomChange::QntdHole(u8at(b, &mut p)?),           // QNTD_HOLE
-            5 => RoomChange::Modo(u8at(b, &mut p)?),               // MODO
-            6 => RoomChange::TempoVs(u16at(b, &mut p)? as u32 * 1000), // TEMPO_VS (s→ms)
-            7 => RoomChange::MaxPlayer(u8at(b, &mut p)?),          // MAX_PLAYER
+            0 => RoomChange::Name(lp(b, &mut p)?),                       // name
+            1 => RoomChange::Password(lp(b, &mut p)?),                  // password
+            2 => RoomChange::RoomType(u8at(b, &mut p)?),               // room type
+            3 => RoomChange::Course(u8at(b, &mut p)?),                 // course
+            4 => RoomChange::HoleCount(u8at(b, &mut p)?),              // hole count
+            5 => RoomChange::Mode(u8at(b, &mut p)?),                   // mode
+            6 => RoomChange::VsTime(u16at(b, &mut p)? as u32 * 1000),  // vs time (s -> ms)
+            7 => RoomChange::MaxPlayer(u8at(b, &mut p)?),              // max players
             8 => {
                 u8at(b, &mut p)?;
                 RoomChange::Other
-            } // TEMPO_30S
+            } // 30s timer
             9 => {
                 u8at(b, &mut p)?;
                 RoomChange::Other
-            } // STATE_FLAG (AFK)
+            } // state flag (AFK)
             11 => {
                 u8at(b, &mut p)?;
                 RoomChange::Other
-            } // HOLE_REPEAT
+            } // hole repeat
             12 => {
                 u32at(b, &mut p)?;
                 RoomChange::Other
-            } // FIXED_HOLE
-            13 => RoomChange::Artefato(u32at(b, &mut p)?),         // ARTEFATO
+            } // fixed hole
+            13 => RoomChange::Artifact(u32at(b, &mut p)?),             // artifact
             14 => {
                 u32at(b, &mut p)?;
                 RoomChange::Other
-            } // NATURAL
+            } // natural
             _ => return None, // unknown type — can't keep the cursor aligned
         };
         out.push(change);
@@ -753,14 +818,14 @@ fn parse_change_room_info(b: &[u8]) -> Option<Vec<RoomChange>> {
 fn apply_room_change(room: &mut pangya_model::Room, change: &RoomChange) {
     match change {
         RoomChange::Name(n) => room.name = n.clone(),
-        RoomChange::Senha(s) => room.senha_flag = if s.is_empty() { 1 } else { 0 },
-        RoomChange::Tipo(v) => room.tipo_show = *v,
+        RoomChange::Password(s) => room.senha_flag = if s.is_empty() { 1 } else { 0 },
+        RoomChange::RoomType(v) => room.tipo_show = *v,
         RoomChange::Course(v) => room.course = *v,
-        RoomChange::QntdHole(v) => room.qntd_hole = *v,
-        RoomChange::Modo(v) => room.modo = *v,
-        RoomChange::TempoVs(v) => room.time_vs = *v,
+        RoomChange::HoleCount(v) => room.qntd_hole = *v,
+        RoomChange::Mode(v) => room.modo = *v,
+        RoomChange::VsTime(v) => room.time_vs = *v,
         RoomChange::MaxPlayer(v) => room.max_player = *v,
-        RoomChange::Artefato(v) => room.artefato = *v,
+        RoomChange::Artifact(v) => room.artefato = *v,
         RoomChange::Other => {}
     }
 }
