@@ -266,3 +266,31 @@ paket-files/
 # Python Tools for Visual Studio (PTVS)
 __pycache__/
 *.pyc
+# ── Rust (new server port) ──────────────────────────────────────────────────
+/target
+**/target
+Cargo.lock.bak
+
+# Our server binaries live in bin/ — negate the C# [Bb]in/ rule above (line 28).
+!/bin/
+/bin/*/target/
+
+# local server config / runtime data
+/server.ini
+/Log/
+/data/*.iff
+
+# runtime artifacts (logs, pids, generated server.ini copies under run/)
+/run/*.log
+/run/*.pid
+/run/*/server.ini
+
+# client patcher binary (not part of the server)
+/updatelist
+
+# shipped game data (large binary; live IFF tests skip when absent)
+/*.iff
+
+# IDE
+/.vscode/
+/.idea/

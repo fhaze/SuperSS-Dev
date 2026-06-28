@@ -1,0 +1,15 @@
+[package]
+name = "pangya-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bytes.workspace = true
+tokio-util.workspace = true
+tokio.workspace = true
+# Pure-Rust LZO1X (MIT). The Pangya wire protocol always LZO1X-compresses
+# server-format packets; the format is standardized so output interoperates
+# with the real client, which expects minilzo-compatible bytes.
+lzokay = "2"

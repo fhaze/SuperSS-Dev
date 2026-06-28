@@ -1,0 +1,35 @@
+# Development environment for the pangya-server Rust port.
+#
+# Brings up MySQL with the schema applied; the server binaries run on the host
+# (or in their own containers once we add Dockerfiles in a later phase).
+#
+#   docker compose up -d mysql
+#   DATABASE_URL=mysql://pangya:pangya@127.0.0.1:3306/pangya cargo sqlx migrate run
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: pangya-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpw
+      MYSQL_DATABASE: pangya
+      MYSQL_USER: pangya
+      MYSQL_PASSWORD: pangya
+    command:
+      # Use the legacy auth plugin for all users so sqlx (no RSA support) and
+      # the original C++ MySQL client can connect.
+      --default-authentication-plugin=mysql_native_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test:
+        ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "root", "-prootpw"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  mysql-data:

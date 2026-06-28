@@ -1,0 +1,29 @@
+[package]
+name = "pangya-server-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+anyhow.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+bytes.workspace = true
+dashmap.workspace = true
+rand.workspace = true
+hex = "0.4"
+pangya-net = { path = "../pangya-net" }
+pangya-db = { path = "../pangya-db" }
+pangya-proto = { path = "../pangya-proto" }
+pangya-model = { path = "../pangya-model" }
+
+[features]
+default = []
+# Enables the live-MySQL login integration test (tests/login_db.rs). Requires
+# DATABASE_URL and the migrations applied.
+integration = []
+
+[dev-dependencies]
+sqlx.workspace = true

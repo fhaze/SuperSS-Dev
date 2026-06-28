@@ -1,0 +1,24 @@
+[package]
+name = "login-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "login-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+bytes.workspace = true
+pangya-config = { path = "../../crates/pangya-config" }
+pangya-server-core = { path = "../../crates/pangya-server-core" }
+pangya-net = { path = "../../crates/pangya-net" }
+pangya-proto = { path = "../../crates/pangya-proto" }
+pangya-db = { path = "../../crates/pangya-db" }
+pangya-model = { path = "../../crates/pangya-model" }
+rand.workspace = true

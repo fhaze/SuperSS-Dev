@@ -1,0 +1,20 @@
+[package]
+name = "auth-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "auth-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+pangya-config = { path = "../../crates/pangya-config" }
+pangya-server-core = { path = "../../crates/pangya-server-core" }
+pangya-net = { path = "../../crates/pangya-net" }
+dashmap.workspace = true

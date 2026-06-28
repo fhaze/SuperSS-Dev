@@ -1,0 +1,19 @@
+[package]
+name = "message-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "message-server"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+pangya-config = { path = "../../crates/pangya-config" }
+pangya-server-core = { path = "../../crates/pangya-server-core" }
+pangya-db = { path = "../../crates/pangya-db" }
+pangya-net = { path = "../../crates/pangya-net" }

@@ -1,0 +1,13 @@
+[package]
+name = "pangya-iff"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+zip = { workspace = true }
+
+[dev-dependencies]
+# Used by the loader's unit tests to build synthetic in-memory IFF archives.
+bytemuck = { version = "1", features = ["derive"] }
