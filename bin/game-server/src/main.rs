@@ -647,21 +647,32 @@ async fn handle_client(
                                     };
                                     let mut items: Vec<(i32, u16)> = Vec::with_capacity(qntd);
                                     let mut total_pang: u64 = 0;
+                                    let mut total_cookie: u64 = 0;
                                     for i in 0..qntd {
                                         let o = 3 + i * stride;
                                         let typeid = rd_u32(o + 4) as i32;
                                         let item_qntd = rd_u32(o + 12).max(1) as u16;
-                                        total_pang += rd_u32(o + 16) as u64; // client price
+                                        // The client sends the price in pang OR cookie
+                                        // depending on whether it's a cash item.
+                                        total_pang += rd_u32(o + 16) as u64;
+                                        total_cookie += rd_u32(o + 20) as u64;
                                         items.push((typeid, item_qntd));
                                     }
                                     let bal = repos::user_info(&pool, u).await.unwrap_or_default();
-                                    let ok = total_pang > 0
+                                    // Require at least one currency and enough of each
+                                    // (mirrors the C++ `cookie < cookie || pang < pang`).
+                                    let affordable = (total_pang > 0 || total_cookie > 0)
                                         && bal.pang >= total_pang
-                                        && repos::spend_pang(&pool, u, total_pang)
-                                            .await
-                                            .unwrap_or(false);
-                                    if ok {
+                                        && bal.cookie >= total_cookie;
+                                    if affordable {
+                                        if total_pang > 0 {
+                                            let _ = repos::spend_pang(&pool, u, total_pang).await;
+                                        }
+                                        if total_cookie > 0 {
+                                            let _ = repos::spend_cookie(&pool, u, total_cookie).await;
+                                        }
                                         let new_pang = bal.pang - total_pang;
+                                        let new_cookie = bal.cookie - total_cookie;
                                         let mut bought = Vec::with_capacity(items.len());
                                         for (typeid, q) in &items {
                                             let item_id = repos::add_warehouse_item(&pool, u, *typeid)
@@ -674,26 +685,35 @@ async fn handle_client(
                                             });
                                         }
                                         let _ = send_server(
-                                            &game_resp::build_buy_result(0, new_pang, bal.cookie),
+                                            &game_resp::build_buy_result(0, new_pang, new_cookie),
                                             sk, &mut write_half,
                                         ).await;
                                         let _ = send_server(
-                                            &game_resp::build_buy_receipt(&bought, new_pang, bal.cookie),
+                                            &game_resp::build_buy_receipt(&bought, new_pang, new_cookie),
                                             sk, &mut write_half,
                                         ).await;
-                                        let _ = send_server(
-                                            &game_resp::build_pang_spent(new_pang, total_pang),
-                                            sk, &mut write_half,
-                                        ).await;
-                                        // Trailing 0x20E ack (re-arms the shop UI),
-                                        // matching the capture's post-buy sequence.
+                                        // Currency-spent notifications: 0xC8 for pang,
+                                        // 0x96 (cookie balance) for cash.
+                                        if total_pang > 0 {
+                                            let _ = send_server(
+                                                &game_resp::build_pang_spent(new_pang, total_pang),
+                                                sk, &mut write_half,
+                                            ).await;
+                                        }
+                                        if total_cookie > 0 {
+                                            let _ = send_server(
+                                                &game_resp::build_cookie(new_cookie),
+                                                sk, &mut write_half,
+                                            ).await;
+                                        }
+                                        // Trailing 0x20E ack (re-arms the shop UI).
                                         let _ = send_server(
                                             &game_resp::build_shop_enter_ack(),
                                             sk, &mut write_half,
                                         ).await;
                                         info!(
-                                            "[{}] {peer}: bought {} item(s) for {} pang ({} left)",
-                                            LOG_PREFIX, items.len(), total_pang, new_pang
+                                            "[{}] {peer}: bought {} item(s) for {} pang + {} cookie",
+                                            LOG_PREFIX, items.len(), total_pang, total_cookie
                                         );
                                     } else {
                                         // Insufficient funds / invalid → error result.
@@ -701,7 +721,10 @@ async fn handle_client(
                                             &game_resp::build_buy_result(2, bal.pang, bal.cookie),
                                             sk, &mut write_half,
                                         ).await;
-                                        warn!("[{}] {peer}: buy rejected (need {} pang, have {})", LOG_PREFIX, total_pang, bal.pang);
+                                        warn!(
+                                            "[{}] {peer}: buy rejected (need {} pang/{} cookie, have {}/{})",
+                                            LOG_PREFIX, total_pang, total_cookie, bal.pang, bal.cookie
+                                        );
                                     }
                                 }
                             }

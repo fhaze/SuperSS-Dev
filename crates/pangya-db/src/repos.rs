@@ -554,6 +554,20 @@ pub async fn update_character_parts(
     Ok(())
 }
 
+/// Deduct `amount` cookie (cash) from a player, guarded against going negative.
+/// Returns `true` if applied. Mirrors the cookie side of `consomeMoeda`.
+pub async fn spend_cookie(pool: &DbPool, uid: i64, amount: u64) -> Result<bool, RepoError> {
+    let res = sqlx::query(
+        "UPDATE pangya_player_currency SET cookie = cookie - ? WHERE UID = ? AND cookie >= ?",
+    )
+    .bind(amount)
+    .bind(uid)
+    .bind(amount)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
 /// Grant an item to a player's warehouse (the C++ `item_manager::addItem` for a
 /// shop purchase). Returns the new warehouse `item_id` (echoed back to the client
 /// in the buy receipt). `ItemType` defaults to 2 (a normal item).
