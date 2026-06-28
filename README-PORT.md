@@ -4,7 +4,7 @@ A from-scratch Rust reimplementation of the SuperSS-Dev Pangya server emulator
 (originally C++, ~215k LOC). The goal is a clean, type-safe, memory-safe server
 that is easier to extend with new features.
 
-For the original project, see [`readme.MD`](readme.MD).
+For the original project, see [`reference-cpp/readme.MD`](reference-cpp/readme.MD).
 
 ## Why a rewrite
 

@@ -1,6 +1,6 @@
 -- pangya-server initial schema migration.
 --
--- Source: bk-squema-mysql.sql from the original SuperSS-Dev C++ repo.
+-- Source: reference-cpp/bk-squema-mysql.sql from the original SuperSS-Dev C++ repo.
 -- Phase 0 establishes the migration framework plus the core tables that
 -- Phases 3–5 (Auth / Login / Game-lobby) require. The remaining ~170 tables
 -- (characters, items, caddies, mascots, cards, warehouse, mail, guilds, quests,

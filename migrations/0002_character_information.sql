@@ -1,6 +1,6 @@
 -- Character information table.
 --
--- Ports `pangya_character_information` from bk-squema-mysql.sql (47 columns).
+-- Ports `pangya_character_information` from reference-cpp/bk-squema-mysql.sql (47 columns).
 -- One row per character instance a player owns; the equipped character is the
 -- one referenced by UserEquip.character_id. This is what the 0x0044 principal
 -- packet and the 0x004B (change item, type 4) response serialize as the
