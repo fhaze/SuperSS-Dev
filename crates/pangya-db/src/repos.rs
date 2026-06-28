@@ -416,10 +416,21 @@ pub async fn clubset_info(pool: &DbPool, uid: i64) -> Result<ClubSetInfo, RepoEr
 /// run migration 0002), falls back to a hardcoded Erika default so the client
 /// still gets a valid character past "Loading...".
 pub async fn characters(pool: &DbPool, uid: i64) -> Result<Vec<CharacterInfo>, RepoError> {
+    // The client computes the character's stat bars from the equipped parts —
+    // each part with a non-zero `parts_id_N` whose `parts_N` typeid resolves in
+    // Part.iff contributes its IFF stat slots. `PCL` is loaded for completeness
+    // but the client ignores it (the live capture had PCL all-zero).
     let rows = sqlx::query(
         "SELECT item_id, typeid, \
          PCL0, PCL1, PCL2, PCL3, PCL4, \
-         default_hair, default_shirts, gift_flag, Purchase, Mastery \
+         default_hair, default_shirts, gift_flag, Purchase, Mastery, \
+         parts_1, parts_2, parts_3, parts_4, parts_5, parts_6, parts_7, parts_8, \
+         parts_9, parts_10, parts_11, parts_12, parts_13, parts_14, parts_15, parts_16, \
+         parts_17, parts_18, parts_19, parts_20, parts_21, parts_22, parts_23, parts_24, \
+         parts_id_1, parts_id_2, parts_id_3, parts_id_4, parts_id_5, parts_id_6, \
+         parts_id_7, parts_id_8, parts_id_9, parts_id_10, parts_id_11, parts_id_12, \
+         parts_id_13, parts_id_14, parts_id_15, parts_id_16, parts_id_17, parts_id_18, \
+         parts_id_19, parts_id_20, parts_id_21, parts_id_22, parts_id_23, parts_id_24 \
          FROM pangya_character_information WHERE UID = ?",
     )
     .bind(uid)
@@ -436,6 +447,14 @@ pub async fn characters(pool: &DbPool, uid: i64) -> Result<Vec<CharacterInfo>, R
                 pcl[2] = clamp_u8(&row, "PCL2");
                 pcl[3] = clamp_u8(&row, "PCL3");
                 pcl[4] = clamp_u8(&row, "PCL4");
+                let mut parts_typeid = [0i32; 24];
+                let mut parts_id = [0i32; 24];
+                for i in 0..24 {
+                    parts_typeid[i] =
+                        row.try_get::<i32, _>(format!("parts_{}", i + 1).as_str()).unwrap_or(0);
+                    parts_id[i] =
+                        row.try_get::<i32, _>(format!("parts_id_{}", i + 1).as_str()).unwrap_or(0);
+                }
                 out.push(CharacterInfo {
                     typeid: row.try_get("typeid")?,
                     id: row.try_get::<i64, _>("item_id")? as i32,
@@ -443,6 +462,8 @@ pub async fn characters(pool: &DbPool, uid: i64) -> Result<Vec<CharacterInfo>, R
                     default_shirts: clamp_u8(&row, "default_shirts"),
                     gift_flag: clamp_u8(&row, "gift_flag"),
                     purchase: clamp_u8(&row, "Purchase"),
+                    parts_typeid,
+                    parts_id,
                     pcl,
                     mastery: row.try_get("Mastery")?,
                     ..Default::default()

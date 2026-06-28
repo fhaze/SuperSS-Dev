@@ -125,6 +125,17 @@ VALUES
   (1, 0x10000000, 2, 1),   -- Air Knight Set (beginner ClubSet, 1 owned)
   (1, 0x14000000, 2, 100); -- Aztec / default Comet ball (stack of 100)
 
+-- Own the equipped stat parts referenced by Erika's CharacterInfo (0002). The
+-- item_ids are forced to the exact values the character's parts_id_N slots point
+-- at, so the equipped parts resolve to genuinely-owned warehouse rows. ItemType 2
+-- matches how the live server tags parts.
+INSERT INTO `pangya_item_warehouse` (`item_id`, `UID`, `typeid`, `ItemType`)
+VALUES
+  (11349, 1, 0x08040800, 2),  -- slot 0, spin+1
+  (11350, 1, 0x08044006, 2),  -- slot 2 (head), power+1
+  (11351, 1, 0x08046800, 2),  -- slot 3 (glove), curve+1
+  (11352, 1, 0x0804E004, 2);  -- slot 7, accuracy+1
+
 -- Equip Erika (character_id 1) + the starter clubset + ball.
 -- Per the C++ UserEquip semantics (player.cpp): clubset_id holds the warehouse
 -- item_id (the instance), character_id holds the character's item_id, and
@@ -133,4 +144,4 @@ VALUES
 INSERT INTO `pangya_user_equip`
   (`UID`, `character_id`, `club_id`, `ball_type`)
 VALUES
-  (1, 1, 1, 0x14000000);  -- club_id=1 = the Air Knight warehouse row above
+  (1, 1, 1, 0x14000000);  -- character_id=1 = Erika; club_id=1 = Air Knight row

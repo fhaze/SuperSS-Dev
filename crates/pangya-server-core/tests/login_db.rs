@@ -88,6 +88,39 @@ async fn login_succeeds_and_mints_auth_key() {
         .unwrap();
 }
 
+/// End-to-end check that the equipped character for the test account (UID 1)
+/// loads from the DB (Erika, 0x04000001) with its equipped stat parts. The
+/// equipped parts (non-zero `parts_id`) add a stat bonus on top of the clubset
+/// base stats — together they make the client render non-zero stat bars. Guards
+/// the `pangya_character_information` seed + the `parts_N`/`parts_id_N` loader
+/// mapping.
+#[tokio::test]
+#[ignore]
+async fn equipped_character_has_stat_parts() {
+    let pool = pool_or_skip().await;
+    let chars = repos::characters(&pool, 1).await.expect("load characters");
+    let ci = chars.first().expect("test account has a character");
+
+    assert_eq!(ci.typeid, 0x04000001, "equipped character is Erika");
+    // Equipped stat parts (slot -> typeid) and their non-zero instance ids.
+    let expect = [
+        (0, 0x08040800i32, 11349i32),
+        (2, 0x08044006, 11350),
+        (3, 0x08046800, 11351),
+        (7, 0x0804E004, 11352),
+    ];
+    for (slot, tid, id) in expect {
+        assert_eq!(ci.parts_typeid[slot], tid, "parts_typeid[{slot}]");
+        assert_eq!(ci.parts_id[slot], id, "parts_id[{slot}]");
+    }
+    // The stat-bearing parts (non-zero parts_id) must be present — without them
+    // (and the clubset) the client shows all-zero stats.
+    assert!(
+        ci.parts_id.iter().filter(|&&v| v != 0).count() >= 4,
+        "character must have equipped (stat-bearing) parts"
+    );
+}
+
 #[tokio::test]
 #[ignore]
 async fn wrong_password_is_denied() {

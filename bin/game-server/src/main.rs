@@ -143,6 +143,9 @@ async fn handle_client(
     let mut uid: Option<i64> = None;
     let mut nickname: String = String::new();
     let mut current_channel: Option<u8> = None;
+    // The room the player is currently in (set on create/enter), so a
+    // `0x0A` change-room-info knows which room to mutate.
+    let mut current_room: Option<u32> = None;
     // The player's loaded equipment (characters, caddies, warehouse, mascots,
     // equip slots, clubset). Used by the 0x000B (change item) handler to answer
     // any item-type request from real state.
@@ -302,6 +305,7 @@ async fn handle_client(
                                         players: vec![u],
                                     };
                                     let created = state.create_room_full(room);
+                                    current_room = Some(created.id);
                                     info!(
                                         "[{}] {peer}: created room {} '{}' (course={}, modo={}, max={})",
                                         LOG_PREFIX, created.id, String::from_utf8_lossy(&created.name), req.course, req.modo, req.max_player
@@ -330,16 +334,22 @@ async fn handle_client(
                                             .find(|c| c.id == eq.equip.character_id)
                                             .or_else(|| eq.characters.first());
                                         // state_flag bits: master(3), sexo(5),
-                                        // azinha/good-quit-rate(8). The gender
-                                        // bit is required for the client to
-                                        // render the player and enable room UI.
-                                        let mut state_flag = 0b0000_1000u16; // master
+                                        // ready(9). The live C++ server marks the
+                                        // room master ready (room.cpp:1141); the
+                                        // captured master had state_flag=0x0228
+                                        // (master+sexo+ready). The gender bit is
+                                        // required for the client to render the
+                                        // player and enable the room UI.
+                                        let mut state_flag = 0b0000_1000u16; // master (bit 3)
                                         if eq.sex != 0 {
-                                            state_flag |= 0b0010_0000; // sexo (female)
+                                            state_flag |= 0b0010_0000; // sexo (bit 5)
                                         }
-                                        state_flag |= 0b0000_0001_0000_0000; // azinha (<3% quit)
+                                        state_flag |= 0b0000_0010_0000_0000; // ready (bit 9)
                                         let pri = pangya_model::PlayerRoomInfo {
-                                            oid: u as u32,
+                                            // Must match the player's lobby oid
+                                            // (0) so the client recognizes itself
+                                            // in the room — see build_player_canal_info.
+                                            oid: 0,
                                             nickname: nickname.clone(),
                                             position: 1,
                                             char_typeid: equipped_char
@@ -385,6 +395,9 @@ async fn handle_client(
                                 {
                                     let room_id = req.room_numero as u32;
                                     let entered = state.room_add_player(room_id, u);
+                                    if entered {
+                                        current_room = Some(room_id);
+                                    }
                                     info!(
                                         "[{}] {peer}: enter room {room_id} -> {}",
                                         LOG_PREFIX,
@@ -394,14 +407,48 @@ async fn handle_client(
                             }
                         }
                         0x0A => {
-                            // LeaveRoom
-                            if let Some(u) = uid {
-                                // Best-effort: leave whatever room the player is in.
-                                for room in state.list_rooms() {
-                                    if room.players.contains(&u) {
-                                        state.room_remove_player(room.id, u);
-                                        break;
+                            // Change Room Info (requestChangeInfoRoom). The room
+                            // master changes settings — course, holes, mode, etc.
+                            // Opcode 0x0A is INFO_CHANGE (game_server.cpp:302),
+                            // NOT leave-room. Mirrors room::requestChangeInfoRoom:
+                            // apply each change, then broadcast 0x4A (room update)
+                            // and 0x47 (lobby room list). Only the master may change
+                            // the info (room.cpp:1456).
+                            if let (Some(u), Some(room_id)) = (uid, current_room) {
+                                match parse_change_room_info(&frame.body[2..]) {
+                                    Some(changes) => {
+                                        let updated = state.update_room(room_id, |room| {
+                                            if room.master as i64 == u {
+                                                for ch in &changes {
+                                                    apply_room_change(room, ch);
+                                                }
+                                            }
+                                        });
+                                        if let Some(room) = updated {
+                                            if room.master as i64 == u {
+                                                let wire =
+                                                    game_resp::RoomInfoWire::from_room(&room);
+                                                // 0x4A: room state update (course etc.).
+                                                let upd = game_resp::build_room_update(&wire);
+                                                let _ =
+                                                    send_server(&upd, sk, &mut write_half).await;
+                                                // 0x47 option 3: refresh the lobby list.
+                                                let list =
+                                                    game_resp::build_room_list(&[wire], 3);
+                                                if let Some(ch) = current_channel {
+                                                    state.broadcast_channel(ch, &list).await;
+                                                }
+                                                let _ =
+                                                    send_server(&list, sk, &mut write_half).await;
+                                            } else {
+                                                warn!("[{}] {peer}: non-master tried to change room info", LOG_PREFIX);
+                                            }
+                                        }
                                     }
+                                    None => warn!(
+                                        "[{}] {peer}: malformed 0x0A change-room-info",
+                                        LOG_PREFIX
+                                    ),
                                 }
                             }
                         }
@@ -599,12 +646,162 @@ fn build_player_canal_info(
     }
     pangya_model::PlayerCanalInfo {
         uid: uid_val,
-        oid: uid_val,
+        // The object id (m_oid) is a per-session handle the client learns at
+        // login (principal MemberInfo.oid, which we leave 0) and uses to find
+        // *itself* in lobby/room packets. It is NOT the uid. It must match the
+        // oid in the 0x48 room packet, else the client can't identify itself in
+        // the room and grays the room UI (course select, stats). For the single
+        // test player this is 0; multiplayer needs a real per-session counter.
+        oid: 0,
         sala_numero: -1, // in lobby, not in a room
         nickname: nickname.to_owned(),
         level: 1,
         state_flag,
         ..Default::default()
+    }
+}
+
+/// One field change inside a `0x0A` change-room-info packet. Variants we model
+/// mutate the room; `Other` is a recognized type whose value we consume (to keep
+/// the parse aligned) but don't persist yet.
+#[derive(Debug)]
+enum RoomChange {
+    Name(Vec<u8>),
+    Senha(Vec<u8>),
+    Tipo(u8),
+    Course(u8),
+    QntdHole(u8),
+    Modo(u8),
+    TempoVs(u32),
+    MaxPlayer(u8),
+    Artefato(u32),
+    Other,
+}
+
+/// Parse a `0x0A` change-room-info body: `flag:i16, num_info:u8`, then
+/// `num_info × (type:u8, value…)`. Mirrors `room::requestChangeInfoRoom`
+/// (`room.cpp:1446`) and the `RoomInfo::INFO_CHANGE` enum. Returns `None` on a
+/// truncated/unknown body so the caller leaves the room untouched.
+fn parse_change_room_info(b: &[u8]) -> Option<Vec<RoomChange>> {
+    fn u8at(b: &[u8], p: &mut usize) -> Option<u8> {
+        let v = b.get(*p).copied()?;
+        *p += 1;
+        Some(v)
+    }
+    fn u16at(b: &[u8], p: &mut usize) -> Option<u16> {
+        let s = b.get(*p..*p + 2)?;
+        *p += 2;
+        Some(u16::from_le_bytes([s[0], s[1]]))
+    }
+    fn u32at(b: &[u8], p: &mut usize) -> Option<u32> {
+        let s = b.get(*p..*p + 4)?;
+        *p += 4;
+        Some(u32::from_le_bytes([s[0], s[1], s[2], s[3]]))
+    }
+    // i16-length-prefixed bytes (matching `packet::addString`/`readString`).
+    fn lp(b: &[u8], p: &mut usize) -> Option<Vec<u8>> {
+        let len = u16at(b, p)? as usize;
+        let s = b.get(*p..*p + len)?;
+        *p += len;
+        Some(s.to_vec())
+    }
+
+    let mut p = 0usize;
+    let _flag = u16at(b, &mut p)?; // INFO_CHANGE flag (unused)
+    let num = u8at(b, &mut p)?;
+    let mut out = Vec::with_capacity(num as usize);
+    for _ in 0..num {
+        let change = match u8at(b, &mut p)? {
+            0 => RoomChange::Name(lp(b, &mut p)?),                  // NAME
+            1 => RoomChange::Senha(lp(b, &mut p)?),                 // SENHA
+            2 => RoomChange::Tipo(u8at(b, &mut p)?),               // TIPO
+            3 => RoomChange::Course(u8at(b, &mut p)?),             // COURSE
+            4 => RoomChange::QntdHole(u8at(b, &mut p)?),           // QNTD_HOLE
+            5 => RoomChange::Modo(u8at(b, &mut p)?),               // MODO
+            6 => RoomChange::TempoVs(u16at(b, &mut p)? as u32 * 1000), // TEMPO_VS (s→ms)
+            7 => RoomChange::MaxPlayer(u8at(b, &mut p)?),          // MAX_PLAYER
+            8 => {
+                u8at(b, &mut p)?;
+                RoomChange::Other
+            } // TEMPO_30S
+            9 => {
+                u8at(b, &mut p)?;
+                RoomChange::Other
+            } // STATE_FLAG (AFK)
+            11 => {
+                u8at(b, &mut p)?;
+                RoomChange::Other
+            } // HOLE_REPEAT
+            12 => {
+                u32at(b, &mut p)?;
+                RoomChange::Other
+            } // FIXED_HOLE
+            13 => RoomChange::Artefato(u32at(b, &mut p)?),         // ARTEFATO
+            14 => {
+                u32at(b, &mut p)?;
+                RoomChange::Other
+            } // NATURAL
+            _ => return None, // unknown type — can't keep the cursor aligned
+        };
+        out.push(change);
+    }
+    Some(out)
+}
+
+/// Apply one parsed change to the room (mirrors the `set*` calls in
+/// `room::requestChangeInfoRoom`).
+fn apply_room_change(room: &mut pangya_model::Room, change: &RoomChange) {
+    match change {
+        RoomChange::Name(n) => room.name = n.clone(),
+        RoomChange::Senha(s) => room.senha_flag = if s.is_empty() { 1 } else { 0 },
+        RoomChange::Tipo(v) => room.tipo_show = *v,
+        RoomChange::Course(v) => room.course = *v,
+        RoomChange::QntdHole(v) => room.qntd_hole = *v,
+        RoomChange::Modo(v) => room.modo = *v,
+        RoomChange::TempoVs(v) => room.time_vs = *v,
+        RoomChange::MaxPlayer(v) => room.max_player = *v,
+        RoomChange::Artefato(v) => room.artefato = *v,
+        RoomChange::Other => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_course_change() {
+        // flag=0 (i16), num_info=1, type=3 (COURSE), value=14
+        let body = [0u8, 0, 1, 3, 14];
+        let changes = parse_change_room_info(&body).expect("parses");
+        assert_eq!(changes.len(), 1);
+        let mut room = pangya_model::Room {
+            master: 1,
+            course: 0,
+            ..Default::default()
+        };
+        for c in &changes {
+            apply_room_change(&mut room, c);
+        }
+        assert_eq!(room.course, 14);
+    }
+
+    #[test]
+    fn parse_multi_change_course_and_holes() {
+        // num_info=2: COURSE=5, then QNTD_HOLE=18
+        let body = [0u8, 0, 2, 3, 5, 4, 18];
+        let changes = parse_change_room_info(&body).expect("parses");
+        let mut room = pangya_model::Room::default();
+        for c in &changes {
+            apply_room_change(&mut room, c);
+        }
+        assert_eq!((room.course, room.qntd_hole), (5, 18));
+    }
+
+    #[test]
+    fn parse_rejects_truncated() {
+        // Claims 1 change but the value byte is missing.
+        assert!(parse_change_room_info(&[0u8, 0, 1, 3]).is_none());
     }
 }
 

@@ -183,6 +183,7 @@ pub fn write_warehouse_item(out: &mut Vec<u8>, wi: &pangya_model::WarehouseItem)
 /// `equipped_char` is the player's equipped `CharacterInfo` (or `None` to
 /// zero-fill that block — which the client rejects, so callers should always
 /// supply a real character).
+#[allow(clippy::too_many_arguments)] // mirrors the wide C++ `principal()` signature
 pub fn build_player_info(
     client_version: &str,
     uid: i64,
@@ -191,6 +192,7 @@ pub fn build_player_info(
     server_property: i32,
     equipped_char: Option<&pangya_model::CharacterInfo>,
     equip: Option<&pangya_model::UserEquip>,
+    clubset: Option<&pangya_model::ClubSetInfo>,
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(13000);
     write_opcode(0x44, &mut out);
@@ -240,8 +242,15 @@ pub fn build_player_info(
     // CaddieInfo (25 bytes) — zeros
     out.resize(out.len() + 25, 0);
 
-    // ClubSetInfo (28 bytes) — zeros
-    out.resize(out.len() + 28, 0);
+    // ClubSetInfo (28 bytes) — the equipped clubset. The client computes the
+    // bulk of the character's stat bars from the clubset's base stats (looked up
+    // in ClubSet.iff by typeid), so a zeroed block here makes the stats read ~0
+    // even with a fully-equipped character.
+    if let Some(cs) = clubset {
+        write_clubset_info(&mut out, cs);
+    } else {
+        out.resize(out.len() + 28, 0);
+    }
 
     // MascotInfo (70 bytes) — zeros
     out.resize(out.len() + 70, 0);
@@ -583,8 +592,10 @@ pub fn write_player_room_info(out: &mut Vec<u8>, pri: &pangya_model::PlayerRoomI
     out.resize(out.len() + 12, 0); // location (3 floats)
     out.extend_from_slice(&0u32.to_le_bytes()); // shop.active
     out.resize(out.len() + 64, 0); // shop.name[64]
-    out.extend_from_slice(&pri.mascot_typeid.to_le_bytes());
+    // C++ order (pangya_game_st.h:2189): flag_item_boost (u16) precedes
+    // mascot_typeid (u32) — they were swapped here, shifting both fields.
     out.extend_from_slice(&0u16.to_le_bytes()); // flag_item_boost
+    out.extend_from_slice(&pri.mascot_typeid.to_le_bytes());
     out.extend_from_slice(&0u32.to_le_bytes()); // ulUnknown_flg
     out.resize(out.len() + 22, 0); // id_NT[22]
     out.resize(out.len() + 106, 0); // ucUnknown106[106]
@@ -959,11 +970,84 @@ mod tests {
         assert_eq!(&buf[pcl_off..pcl_off + 5], &[9, 11, 6, 2, 2]);
     }
 
+    /// The 513-byte `CharacterInfo` captured from the live C++ server (the
+    /// equipped character in a `0x4B` change-item response — GM "FHaze", Kooh
+    /// `0x04000005`). `write_character_info` must reproduce it byte-for-byte.
+    /// This is the ground-truth check that the parts/stat fields land correctly.
+    #[test]
+    fn character_info_matches_live_capture() {
+        let capture_hex = include_str!("../tests/fixtures/character_info_capture.hex").trim();
+        let expected: Vec<u8> = (0..capture_hex.len() / 2)
+            .map(|i| u8::from_str_radix(&capture_hex[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
+        assert_eq!(expected.len(), 513);
+
+        let mut ci = pangya_model::CharacterInfo {
+            typeid: 0x04000005,
+            id: 489,
+            default_hair: 3,
+            default_shirts: 0,
+            gift_flag: 1,
+            purchase: 0,
+            ..Default::default()
+        };
+        // Equipped parts (slot → typeid) captured from the live server.
+        for (slot, tid) in [
+            (1, 0x08142400i32),
+            (2, 0x08144016),
+            (3, 0x08144600),
+            (4, 0x08148400),
+            (6, 0x0814C20C),
+            (7, 0x0814E010),
+            (20, 0x08168027),
+            (23, 0x0816E806),
+        ] {
+            ci.parts_typeid[slot] = tid;
+        }
+        // Instance ids (the stat gate): only the equipped (non-default) parts.
+        for (slot, id) in [(2, 11351i32), (6, 11352), (7, 11352), (20, 11349), (23, 11353)] {
+            ci.parts_id[slot] = id;
+        }
+
+        let mut buf = Vec::new();
+        write_character_info(&mut buf, &ci);
+        assert_eq!(buf, expected, "serialized CharacterInfo must match the live capture");
+    }
+
+    /// The 348-byte `PlayerRoomInfo` header captured from the live C++ server
+    /// (`0x48`, room master Kooh). Guards the field layout — notably the
+    /// `flag_item_boost`/`mascot_typeid` ordering that was previously swapped.
+    #[test]
+    fn player_room_info_header_matches_live_capture() {
+        let capture_hex =
+            include_str!("../tests/fixtures/player_room_info_capture.hex").trim();
+        let expected: Vec<u8> = (0..capture_hex.len() / 2)
+            .map(|i| u8::from_str_radix(&capture_hex[i * 2..i * 2 + 2], 16).unwrap())
+            .collect();
+        assert_eq!(expected.len(), 348);
+
+        let pri = pangya_model::PlayerRoomInfo {
+            oid: 0,
+            nickname: "FHaze".into(),
+            position: 1,
+            char_typeid: 0x04000005,
+            state_flag: 0x0228, // master + sexo + ready
+            level: 0,
+            uid: 14638,
+            ..Default::default()
+        };
+        let mut buf = Vec::new();
+        write_player_room_info(&mut buf, &pri, false);
+        assert_eq!(buf, expected, "PlayerRoomInfo header must match the live capture");
+    }
+
     #[test]
     fn player_info_carries_equipped_character() {
         let ci = pangya_model::CharacterInfo::from_iff(0x04000001, 1, [9, 11, 6, 2, 2]);
-        let with_char = build_player_info("SS.R7.995.00", 1, "test", "Tester", 2048, Some(&ci), None);
-        let without = build_player_info("SS.R7.995.00", 1, "test", "Tester", 2048, None, None);
+        let with_char =
+            build_player_info("SS.R7.995.00", 1, "test", "Tester", 2048, Some(&ci), None, None);
+        let without =
+            build_player_info("SS.R7.995.00", 1, "test", "Tester", 2048, None, None, None);
         // Same total size whether or not a character is supplied.
         assert_eq!(with_char.len(), without.len());
 

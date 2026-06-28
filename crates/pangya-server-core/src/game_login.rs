@@ -151,6 +151,7 @@ pub async fn handle_game_login(
                 2048, // server property
                 equipped,
                 Some(&equip),
+                Some(&clubset_info),
             ),
             // Equipment cascade (mirrors sendCompleteData order).
             game_resp::build_character_list(&characters),

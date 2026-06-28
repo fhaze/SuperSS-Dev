@@ -114,6 +114,19 @@ impl ServerState {
         v
     }
 
+    /// Apply an in-place mutation to a room (e.g. a `0x0A` change-room-info),
+    /// returning the updated room. Returns `None` if the room is gone.
+    pub fn update_room(
+        &self,
+        room_id: u32,
+        f: impl FnOnce(&mut pangya_model::Room),
+    ) -> Option<pangya_model::Room> {
+        self.rooms.get_mut(&room_id).map(|mut room| {
+            f(&mut room);
+            room.clone()
+        })
+    }
+
     /// Add a player to a room. Returns false if full or not found.
     pub fn room_add_player(&self, room_id: u32, uid: i64) -> bool {
         if let Some(mut room) = self.rooms.get_mut(&room_id) {
