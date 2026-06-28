@@ -62,8 +62,11 @@ CREATE TABLE `pangya_character_information` (
 -- Seed the default test character for the test account (UID 1): Erika
 -- (typeid 0x04000001), the JP beginner female character. PCL stats
 -- (power/control/accuracy/spin/curve = 9/11/6/2/2) are taken verbatim from
--- pangya_jp.iff → Character.iff.
+-- pangya_jp.iff → Character.iff. Default parts computed via initComboDef
+-- (32-bit truncated), verified against Part.iff — slots 0-4,6,7 exist.
 INSERT INTO `pangya_character_information`
-  (`typeid`, `UID`, `PCL0`, `PCL1`, `PCL2`, `PCL3`, `PCL4`)
+  (`typeid`, `UID`, `PCL0`, `PCL1`, `PCL2`, `PCL3`, `PCL4`,
+   `parts_1`, `parts_2`, `parts_3`, `parts_4`, `parts_5`, `parts_7`, `parts_8`)
 VALUES
-  (0x04000001, 1, 9, 11, 6, 2, 2);
+  (0x04000001, 1, 9, 11, 6, 2, 2,
+   0x08040400, 0x08042400, 0x08044400, 0x08046400, 0x08048400, 0x0804C400, 0x0804E400);

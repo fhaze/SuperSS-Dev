@@ -551,6 +551,23 @@ pub fn build_enter_lobby_ack() -> Vec<u8> {
     out
 }
 
+/// Build a bare-opcode ack (no payload). Used by many `sendCompleteData` packets
+/// (0x135, 0x136, etc.) that are just the opcode with no body.
+pub fn build_simple_ack_0byte(opcode: u16) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2);
+    write_opcode(opcode, &mut out);
+    out
+}
+
+/// Build an opcode + single option byte ack. Used by `sendCompleteData` packets
+/// like 0xF1, 0x144, 0x13F.
+pub fn build_simple_ack_1byte(opcode: u16, option: u8) -> Vec<u8> {
+    let mut out = Vec::with_capacity(3);
+    write_opcode(opcode, &mut out);
+    out.push(option);
+    out
+}
+
 /// Serialize a `PlayerRoomInfo` as the packed wire struct. With `include_char`
 /// true, appends the full `CharacterInfo` (513 bytes) — the `PlayerRoomInfoEx`
 /// variant used by `0x48`. Without it, writes the 348-byte base struct.

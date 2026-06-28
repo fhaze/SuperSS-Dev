@@ -419,7 +419,10 @@ pub async fn characters(pool: &DbPool, uid: i64) -> Result<Vec<CharacterInfo>, R
     let rows = sqlx::query(
         "SELECT item_id, typeid, \
          PCL0, PCL1, PCL2, PCL3, PCL4, \
-         default_hair, default_shirts, gift_flag, Purchase, Mastery \
+         default_hair, default_shirts, gift_flag, Purchase, Mastery, \
+         parts_1, parts_2, parts_3, parts_4, parts_5, parts_6, parts_7, parts_8, \
+         parts_9, parts_10, parts_11, parts_12, parts_13, parts_14, parts_15, parts_16, \
+         parts_17, parts_18, parts_19, parts_20, parts_21, parts_22, parts_23, parts_24 \
          FROM pangya_character_information WHERE UID = ?",
     )
     .bind(uid)
@@ -436,6 +439,11 @@ pub async fn characters(pool: &DbPool, uid: i64) -> Result<Vec<CharacterInfo>, R
                 pcl[2] = clamp_u8(&row, "PCL2");
                 pcl[3] = clamp_u8(&row, "PCL3");
                 pcl[4] = clamp_u8(&row, "PCL4");
+                let mut parts_typeid = [0i32; 24];
+                for (i, slot) in parts_typeid.iter_mut().enumerate() {
+                    let col = format!("parts_{}", i + 1);
+                    *slot = row.try_get::<i32, _>(col.as_str()).unwrap_or(0);
+                }
                 out.push(CharacterInfo {
                     typeid: row.try_get("typeid")?,
                     id: row.try_get::<i64, _>("item_id")? as i32,
@@ -445,6 +453,7 @@ pub async fn characters(pool: &DbPool, uid: i64) -> Result<Vec<CharacterInfo>, R
                     purchase: clamp_u8(&row, "Purchase"),
                     pcl,
                     mastery: row.try_get("Mastery")?,
+                    parts_typeid,
                     ..Default::default()
                 });
             }
@@ -455,15 +464,19 @@ pub async fn characters(pool: &DbPool, uid: i64) -> Result<Vec<CharacterInfo>, R
     }
 }
 
-/// The dev fallback: Erika (0x04000001) with the PCL stats read from
-/// `pangya_jp.iff`. Used when no `pangya_character_information` row exists so a
-/// fresh install still serves a valid character.
+/// The dev fallback: Erika (0x04000001) with the PCL stats and default parts.
+/// The parts are computed via the C++ `initComboDef` formula (32-bit truncated)
+/// and verified against `pangya_jp.iff` → Part.iff (7 of 24 slots exist).
 fn default_erika() -> Vec<CharacterInfo> {
-    vec![CharacterInfo::from_iff(
-        0x04000001,
-        1,
-        [9, 11, 6, 2, 2],
-    )]
+    let mut ci = CharacterInfo::from_iff(0x04000001, 1, [9, 11, 6, 2, 2]);
+    // initComboDef: part_typeid = (((typeid << 5) | i) << 13) | 0x8000400
+    // Only slots that exist in Part.iff are set (7 slots for Erika).
+    let existing: &[usize] = &[0, 1, 2, 3, 4, 6, 7];
+    for &i in existing {
+        let pt = (((0x04000001u32 << 5) | i as u32) << 13) | 0x8000400;
+        ci.parts_typeid[i] = pt as i32;
+    }
+    vec![ci]
 }
 
 /// Coerce a `smallint`/`int` column down to a `u8` for the wire struct's

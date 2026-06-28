@@ -306,38 +306,31 @@ async fn handle_client(
                                         "[{}] {peer}: created room {} '{}' (course={}, modo={}, max={})",
                                         LOG_PREFIX, created.id, String::from_utf8_lossy(&created.name), req.course, req.modo, req.max_player
                                     );
-                                    // 0x49: option 0 (success) + full RoomInfo.
+                                    // The C++ sends these in a specific order
+                                    // (channel.cpp:1614-1618):
+                                    //   sendUpdate() → 0x4A (room state)
+                                    //   sendMake()   → 0x49 (room created)
+                                    //   sendCharacter() → 0x48 (player list)
+                                    // Batch the core 3 into a single TCP write —
+                                    // the client may expect them to arrive together.
                                     let room_wire = game_resp::RoomInfoWire::from_room(&created);
-                                    let ack = game_resp::build_make_room_result(0, &room_wire);
-                                    let _ = send_server(&ack, sk, &mut write_half).await;
 
-                                    // 0x4A: room state update (mirrors
-                                    // room::sendUpdate → pacote04A). Sent right
-                                    // after 0x49 so the client syncs room config.
                                     let update = game_resp::build_room_update(&room_wire);
-                                    let _ = send_server(&update, sk, &mut write_half).await;
+                                    let ack = game_resp::build_make_room_result(0, &room_wire);
 
-                                    // 0x48: player list in the room (mirrors
-                                    // room::sendCharacter option 0). The client
-                                    // needs this to fully transition into the
-                                    // room UI (enables course select, ready, etc.).
-                                    // Build a PlayerRoomInfo from the creator's
-                                    // identity + equipped character.
-                                    if let Some(eq) = &equipment {
+                                    // Build the 0x48 player list.
+                                    let players_pkt = if let Some(eq) = &equipment {
                                         let equipped_char = eq
                                             .characters
                                             .iter()
                                             .find(|c| c.id == eq.equip.character_id)
                                             .or_else(|| eq.characters.first());
-                                        // state_flag bits: master(3), sexo(5),
-                                        // azinha/good-quit-rate(8). The gender
-                                        // bit is required for the client to
-                                        // render the player and enable room UI.
-                                        let mut state_flag = 0b0000_1000u16; // master
+                                        let mut state_flag = 0b0000_1000u16; // master (bit 3)
                                         if eq.sex != 0 {
-                                            state_flag |= 0b0010_0000; // sexo (female)
+                                            state_flag |= 0b0010_0000; // sexo (bit 5)
                                         }
-                                        state_flag |= 0b0000_0001_0000_0000; // azinha (<3% quit)
+                                        // Master is always ready (room.cpp:1141).
+                                        state_flag |= 0b0010_0000_0000_0000; // ready (bit 9)
                                         let pri = pangya_model::PlayerRoomInfo {
                                             oid: u as u32,
                                             nickname: nickname.clone(),
@@ -351,10 +344,28 @@ async fn handle_client(
                                             character: equipped_char.cloned(),
                                             ..Default::default()
                                         };
-                                        let players_pkt = game_resp::build_room_players(&[pri]);
-                                        let _ =
-                                            send_server(&players_pkt, sk, &mut write_half).await;
+                                        game_resp::build_room_players(&[pri])
+                                    } else {
+                                        Vec::new()
+                                    };
+
+                                    // Send 0x4A + 0x49 + 0x48 as a single batched write.
+                                    let mut batch = Vec::new();
+                                    for body in [&update, &ack, &players_pkt] {
+                                        if body.is_empty() {
+                                            continue;
+                                        }
+                                        pangya_server_core::packet_log::log_packet(
+                                            pangya_server_core::packet_log::Dir::S2C,
+                                            "GS",
+                                            body,
+                                        );
+                                        let low_key: u8 = rand::thread_rng().gen_range(1..=255);
+                                        if let Err(e) = framing::encode_server(body, sk, low_key, &mut batch) {
+                                            warn!("[{}] {peer}: frame encode error: {e}", LOG_PREFIX);
+                                        }
                                     }
+                                    let _ = write_half.write_all(&batch).await;
 
                                     // 0x47 option 1: broadcast the new room to the
                                     // channel lobby (mirrors sendUpdateRoomInfo(ri, 1)).
