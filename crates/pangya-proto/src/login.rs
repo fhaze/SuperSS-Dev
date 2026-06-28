@@ -188,8 +188,15 @@ impl<'a> PayloadReader<'a> {
         Ok(v)
     }
 
-    /// Read an `i16`-length-prefixed UTF-8 string, matching `packet::readString`.
+    /// Read an `i16`-length-prefixed string, matching `packet::readString`.
     /// A length ≤ 0 yields an empty string.
+    ///
+    /// The wire bytes are decoded **lossily**: the Pangya client sends raw bytes
+    /// in its locale encoding (Shift-JIS for JP), which are not valid UTF-8.
+    /// Strict UTF-8 decoding would reject room names / chat from non-ASCII
+    /// clients, so invalid byte sequences are replaced with the replacement
+    /// char (`�`) rather than erroring. Use [`Self::read_raw_string`] for fields
+    /// that must round-trip the exact bytes back to the wire (e.g. room names).
     pub fn read_string(&mut self, ctx: &'static str) -> Result<String, ProtoError> {
         let len = self.read_u16(ctx)? as i16;
         if len <= 0 {
@@ -199,9 +206,23 @@ impl<'a> PayloadReader<'a> {
         self.need(len, ctx)?;
         let bytes = &self.buf[self.pos..self.pos + len];
         self.pos += len;
-        std::str::from_utf8(bytes)
-            .map(|s| s.to_owned())
-            .map_err(|e| ProtoError::InvalidString(e.to_string()))
+        Ok(String::from_utf8_lossy(bytes).into_owned())
+    }
+
+    /// Read an `i16`-length-prefixed string as **raw bytes**, preserving the
+    /// exact wire content. Use this for fields that are forwarded back to the
+    /// client verbatim (e.g. room names), where lossy UTF-8 decoding would
+    /// destroy Shift-JIS bytes irreversibly.
+    pub fn read_raw_string(&mut self, ctx: &'static str) -> Result<Vec<u8>, ProtoError> {
+        let len = self.read_u16(ctx)? as i16;
+        if len <= 0 {
+            return Ok(Vec::new());
+        }
+        let len = len as usize;
+        self.need(len, ctx)?;
+        let bytes = self.buf[self.pos..self.pos + len].to_vec();
+        self.pos += len;
+        Ok(bytes)
     }
 }
 

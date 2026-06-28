@@ -141,10 +141,12 @@ async fn handle_client(
     let mut reader = read_half;
 
     let mut uid: Option<i64> = None;
+    let mut nickname: String = String::new();
     let mut current_channel: Option<u8> = None;
-    // The player's characters, loaded at login. The first is treated as the
-    // equipped character (mirrors C++ equipDefaultCharacter → mp_ce.begin()).
-    let mut characters: Vec<pangya_model::CharacterInfo> = Vec::new();
+    // The player's loaded equipment (characters, caddies, warehouse, mascots,
+    // equip slots, clubset). Used by the 0x000B (change item) handler to answer
+    // any item-type request from real state.
+    let mut equipment: Option<pangya_server_core::game_login::PlayerEquipment> = None;
 
     loop {
         let mut tmp = [0u8; 8192];
@@ -176,7 +178,8 @@ async fn handle_client(
                                 &pool,
                                 &channels,
                                 &mut uid,
-                                &mut characters,
+                                &mut nickname,
+                                &mut equipment,
                                 sk,
                                 &mut write_half,
                                 &peer,
@@ -252,9 +255,11 @@ async fn handle_client(
                                 let body = game_resp::build_channel_enter_result(result);
                                 let _ = send_server(&body, sk, &mut write_half).await;
                                 if result == 1 {
-                                    // Lobby data: first player (option 4, clears view),
-                                    // then empty room list (option 0).
-                                    let players = game_resp::build_lobby_players(4, 0);
+                                    // Lobby data: send this player's canal info
+                                    // (option 4 = first player, clears view), then
+                                    // the room list.
+                                    let pci = build_player_canal_info(uid, &nickname, &equipment);
+                                    let players = game_resp::build_lobby_players(4, &[pci]);
                                     let _ = send_server(&players, sk, &mut write_half).await;
                                     let rooms = game_resp::build_lobby_room_list(0);
                                     let _ = send_server(&rooms, sk, &mut write_half).await;
@@ -262,18 +267,111 @@ async fn handle_client(
                             }
                         }
                         0x08 => {
-                            // MakeRoom (create room)
+                            // MakeRoom (create room). Build a full Room from the
+                            // request fields, register it, and reply with 0x49
+                            // carrying the complete RoomInfo struct (mirrors
+                            // channel::requestMakeRoom → room::sendMake → pacote049).
                             if let Some(u) = uid {
                                 if let Ok(GamePacket::MakeRoom(req)) =
                                     GamePacket::parse(&frame.body)
                                 {
-                                    let room_id = state.create_room(req.name.clone(), u);
+                                    let room = pangya_model::Room {
+                                        id: 0, // assigned by create_room_full
+                                        name: req.name.clone(),  // Vec<u8> raw bytes
+                                        key: pangya_model::Room::generate_key_pub(),
+                                        senha_flag: if req.password.is_empty() { 1 } else { 0 },
+                                        state: 1,      // waiting
+                                        flag: 0,
+                                        max_player: req.max_player,
+                                        num_player: 1,
+                                        qntd_hole: req.qntd_hole,
+                                        tipo_show: req.tipo,
+                                        numero: 0, // assigned
+                                        modo: req.modo,
+                                        course: req.course,
+                                        time_vs: req.time_vs,
+                                        trofel: 0,
+                                        state_flag: 0,
+                                        rate_pang: 100,
+                                        rate_exp: 100,
+                                        flag_gm: 0,
+                                        master: u as i32,
+                                        tipo_ex: 0xFF, // ~0 for normal rooms (mirrors room.cpp:979)
+                                        artefato: req.artefato,
+                                        leader_uid: u,
+                                        players: vec![u],
+                                    };
+                                    let created = state.create_room_full(room);
                                     info!(
-                                        "[{}] {peer}: created room {room_id} '{}'",
-                                        LOG_PREFIX, req.name
+                                        "[{}] {peer}: created room {} '{}' (course={}, modo={}, max={})",
+                                        LOG_PREFIX, created.id, String::from_utf8_lossy(&created.name), req.course, req.modo, req.max_player
                                     );
-                                    let ack = game_resp::build_create_room_result(room_id as i16);
+                                    // 0x49: option 0 (success) + full RoomInfo.
+                                    let room_wire = game_resp::RoomInfoWire::from_room(&created);
+                                    let ack = game_resp::build_make_room_result(0, &room_wire);
                                     let _ = send_server(&ack, sk, &mut write_half).await;
+
+                                    // 0x4A: room state update (mirrors
+                                    // room::sendUpdate → pacote04A). Sent right
+                                    // after 0x49 so the client syncs room config.
+                                    let update = game_resp::build_room_update(&room_wire);
+                                    let _ = send_server(&update, sk, &mut write_half).await;
+
+                                    // 0x48: player list in the room (mirrors
+                                    // room::sendCharacter option 0). The client
+                                    // needs this to fully transition into the
+                                    // room UI (enables course select, ready, etc.).
+                                    // Build a PlayerRoomInfo from the creator's
+                                    // identity + equipped character.
+                                    if let Some(eq) = &equipment {
+                                        let equipped_char = eq
+                                            .characters
+                                            .iter()
+                                            .find(|c| c.id == eq.equip.character_id)
+                                            .or_else(|| eq.characters.first());
+                                        // state_flag bits: master(3), sexo(5),
+                                        // azinha/good-quit-rate(8). The gender
+                                        // bit is required for the client to
+                                        // render the player and enable room UI.
+                                        let mut state_flag = 0b0000_1000u16; // master
+                                        if eq.sex != 0 {
+                                            state_flag |= 0b0010_0000; // sexo (female)
+                                        }
+                                        state_flag |= 0b0000_0001_0000_0000; // azinha (<3% quit)
+                                        let pri = pangya_model::PlayerRoomInfo {
+                                            oid: u as u32,
+                                            nickname: nickname.clone(),
+                                            position: 1,
+                                            char_typeid: equipped_char
+                                                .map(|c| c.typeid as u32)
+                                                .unwrap_or(0),
+                                            state_flag,
+                                            level: 1,
+                                            uid: u as u32,
+                                            character: equipped_char.cloned(),
+                                            ..Default::default()
+                                        };
+                                        let players_pkt = game_resp::build_room_players(&[pri]);
+                                        let _ =
+                                            send_server(&players_pkt, sk, &mut write_half).await;
+                                    }
+
+                                    // 0x47 option 1: broadcast the new room to the
+                                    // channel lobby (mirrors sendUpdateRoomInfo(ri, 1)).
+                                    // The creator also receives this — it's needed for
+                                    // the client to register the room in the lobby list.
+                                    let rooms_pkt = game_resp::build_room_list(&[room_wire.clone()], 1);
+                                    let _ = send_server(&rooms_pkt, sk, &mut write_half).await;
+
+                                    // 0x46 option 3: update the player's lobby state
+                                    // (mirrors sendUpdatePlayerInfo(session, 3)).
+                                    // This carries the player's updated sala_numero,
+                                    // telling the client it's now in a room. Without
+                                    // this the client may keep room features disabled.
+                                    let mut pci = build_player_canal_info(uid, &nickname, &equipment);
+                                    pci.sala_numero = created.numero;
+                                    let player_update = game_resp::build_lobby_players(3, &[pci]);
+                                    let _ = send_server(&player_update, sk, &mut write_half).await;
                                 }
                             } else {
                                 warn!("[{}] {peer}: create room before login", LOG_PREFIX);
@@ -313,41 +411,100 @@ async fn handle_client(
                             let resp = game_resp::build_handshake_confirm();
                             let _ = send_server(&resp, sk, &mut write_half).await;
                         }
-                        0x0B => {
-                            // Change Player Item (Channel). The 0x4B response must
-                            // include the full struct for the item type (pacote04B):
+                        0x0B | 0x0C => {
+                            // Change Player Item — 0x0B is on Channel, 0x0C is in
+                            // Room. Both have the same format (type byte + item id)
+                            // and the same 0x4B response (pacote04B):
                             // error(4) + type(1) + oid(4) + struct.
                             // type 1=Caddie(25B), 2=Ball(4B), 3=ClubSet(28B),
-                            // 4=Character(513B), 5=Mascot(70B).
+                            // 4=Character(513B), 5=Mascot(62B).
+                            // The client sends 0x0C right after room creation to
+                            // sync the equipped character — without a response the
+                            // room UI stays incomplete (course select grayed).
                             let payload = &frame.body[2..];
                             let item_type = payload.first().copied().unwrap_or(0);
 
-                            // For an equipped character (type 4), return the real
-                            // CharacterInfo — a zeroed struct makes the client hang
-                            // in "Loading..." / disconnect.
-                            if item_type == 4 {
-                                if let Some(ci) = characters.first() {
-                                    let resp = game_resp::build_change_item_character(0, ci.id as u32, ci);
-                                    let _ = send_server(&resp, sk, &mut write_half).await;
-                                    continue;
+                            let resp = if let Some(eq) = &equipment {
+                                match item_type {
+                                    // Caddie — find the equipped caddie by id.
+                                    1 => {
+                                        let ci = eq
+                                            .caddies
+                                            .iter()
+                                            .find(|c| c.id == eq.equip.caddie_id)
+                                            .or_else(|| eq.caddies.first());
+                                        if let Some(ci) = ci {
+                                            game_resp::build_change_item_caddie(0, ci.id as u32, ci)
+                                        } else {
+                                            game_resp::build_change_item_result(0, 1)
+                                        }
+                                    }
+                                    // Ball — return the equipped ball typeid.
+                                    2 => game_resp::build_change_item_ball(
+                                        0,
+                                        0,
+                                        eq.equip.ball_typeid,
+                                    ),
+                                    // ClubSet — return the equipped clubset stats.
+                                    3 => game_resp::build_change_item_clubset(
+                                        0,
+                                        eq.clubset_info.id as u32,
+                                        &eq.clubset_info,
+                                    ),
+                                    // Character — find the equipped character by id.
+                                    4 => {
+                                        let ci = eq
+                                            .characters
+                                            .iter()
+                                            .find(|c| c.id == eq.equip.character_id)
+                                            .or_else(|| eq.characters.first());
+                                        if let Some(ci) = ci {
+                                            game_resp::build_change_item_character(
+                                                0,
+                                                ci.id as u32,
+                                                ci,
+                                            )
+                                        } else {
+                                            game_resp::build_change_item_result(0, 4)
+                                        }
+                                    }
+                                    // Mascot — find the equipped mascot by id.
+                                    5 => {
+                                        let mi = eq
+                                            .mascots
+                                            .iter()
+                                            .find(|m| m.id == eq.equip.mascot_id)
+                                            .or_else(|| eq.mascots.first());
+                                        if let Some(mi) = mi {
+                                            game_resp::build_change_item_mascot(
+                                                0,
+                                                mi.id as u32,
+                                                mi,
+                                            )
+                                        } else {
+                                            game_resp::build_change_item_result(0, 5)
+                                        }
+                                    }
+                                    _ => game_resp::build_change_item_result(0, item_type),
                                 }
-                            }
-
-                            let struct_size = match item_type {
-                                1 => 25,  // CaddieInfo
-                                2 => 4,   // Ball typeid
-                                3 => 28,  // ClubSetInfo
-                                4 => 513, // CharacterInfo
-                                5 => 70,  // MascotInfo
-                                _ => 0,
+                            } else {
+                                // No equipment loaded (pre-login) — best-effort empty ack.
+                                game_resp::build_change_item_result(0, item_type)
                             };
-                            let mut resp = Vec::with_capacity(9 + struct_size);
-                            pangya_proto::write_opcode(0x4B, &mut resp);
-                            resp.extend_from_slice(&0i32.to_le_bytes()); // error=0
-                            resp.push(item_type);
-                            resp.extend_from_slice(&0u32.to_le_bytes()); // oid
-                            resp.resize(resp.len() + struct_size, 0); // zeroed struct
                             let _ = send_server(&resp, sk, &mut write_half).await;
+                        }
+                        0x81 => {
+                            // Enter multiplayer lobby (requestEnterLobby /
+                            // enterLobbyMultiPlayer). Mirrors the C++ sequence:
+                            // 0x46 (players, option 4 clears view) → 0x47 (rooms)
+                            // → 0xF5 (enter-lobby ack).
+                            let pci = build_player_canal_info(uid, &nickname, &equipment);
+                            let players = game_resp::build_lobby_players(4, &[pci]);
+                            let _ = send_server(&players, sk, &mut write_half).await;
+                            let rooms = game_resp::build_lobby_room_list(0);
+                            let _ = send_server(&rooms, sk, &mut write_half).await;
+                            let ack = game_resp::build_enter_lobby_ack();
+                            let _ = send_server(&ack, sk, &mut write_half).await;
                         }
                         0x16E => {
                             // Check Attendance Reward — respond with empty notice.
@@ -380,7 +537,8 @@ async fn handle_login_packet<W: AsyncWriteExt + Unpin>(
     pool: &DbPool,
     channels: &[pangya_model::Channel],
     uid: &mut Option<i64>,
-    characters: &mut Vec<pangya_model::CharacterInfo>,
+    nickname: &mut String,
+    equipment: &mut Option<pangya_server_core::game_login::PlayerEquipment>,
     sk: SessionKey,
     writer: &mut W,
     peer: &str,
@@ -391,11 +549,13 @@ async fn handle_login_packet<W: AsyncWriteExt + Unpin>(
             match outcome {
                 Ok(GameLoginOutcome::Accepted {
                     uid: logged_uid,
+                    nickname: logged_nick,
                     bodies,
-                    characters: loaded_chars,
+                    equipment: loaded_eq,
                 }) => {
                     *uid = Some(logged_uid);
-                    *characters = loaded_chars;
+                    *nickname = logged_nick;
+                    *equipment = Some(*loaded_eq);
                     for body in bodies {
                         if let Err(e) = send_server(&body, sk, writer).await {
                             warn!("[{}] {peer}: send error: {e}", LOG_PREFIX);
@@ -418,6 +578,33 @@ async fn handle_login_packet<W: AsyncWriteExt + Unpin>(
             warn!("[{}] {peer}: unexpected non-login 0x02", LOG_PREFIX);
             false
         }
+    }
+}
+
+/// Build a `PlayerCanalInfo` for the connected player, for the lobby player
+/// list (`0x46`). Uses the connection's uid, nickname, and account sex.
+fn build_player_canal_info(
+    uid: Option<i64>,
+    nickname: &str,
+    equipment: &Option<pangya_server_core::game_login::PlayerEquipment>,
+) -> pangya_model::PlayerCanalInfo {
+    let uid_val = uid.unwrap_or(0) as u32;
+    // state_flag bits: sexo(1), azinha(4). Gender is required for the client.
+    let mut state_flag = 0u8;
+    if let Some(eq) = equipment {
+        if eq.sex != 0 {
+            state_flag |= 0b0000_0010; // sexo (bit 1)
+        }
+        state_flag |= 0b0001_0000; // azinha (<3% quit rate)
+    }
+    pangya_model::PlayerCanalInfo {
+        uid: uid_val,
+        oid: uid_val,
+        sala_numero: -1, // in lobby, not in a room
+        nickname: nickname.to_owned(),
+        level: 1,
+        state_flag,
+        ..Default::default()
     }
 }
 

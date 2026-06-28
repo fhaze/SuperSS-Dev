@@ -109,6 +109,106 @@ impl CharacterInfo {
     }
 }
 
+/// `CaddieInfo` (`pangya_game_st.h:1068`) — the 25-byte wire struct for one
+/// owned caddie. Fields mirror the C++ packed struct.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CaddieInfo {
+    pub id: i32,
+    pub typeid: i32,
+    pub parts_typeid: i32,
+    pub level: u8,
+    pub exp: u32,
+    pub rent_flag: u8,
+    pub end_date_unix: u16,
+    pub parts_end_date_unix: u16,
+    pub purchase: u8,
+    pub check_end: i16,
+}
+
+/// `ClubSetInfo` (`pangya_game_st.h:1144`) — the 28-byte wire struct for the
+/// equipped clubset's stats. `slot_c`/`enchant_c` are workshop upgrades; they
+/// stay zero until the clubset-stats system lands.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClubSetInfo {
+    pub id: i32,
+    pub typeid: i32,
+    pub slot_c: [i16; 5],
+    pub enchant_c: [i16; 5],
+}
+
+/// `MascotInfo` (`pangya_game_st.h:1171`) — the 62-byte wire struct for one
+/// owned mascot. The `data` SYSTEMTIME (rental expiry) is not modelled yet.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MascotInfo {
+    pub id: i32,
+    pub typeid: i32,
+    pub level: u8,
+    pub exp: u32,
+    pub message: String,
+    pub tipo: i16,
+    pub flag: u8,
+}
+
+/// `WarehouseItem` (`pangya_game_st.h:1209`) — the 196-byte wire struct for one
+/// owned warehouse item. The UCC (user-created content) and Card sub-structs are
+/// not persisted yet; only the core item fields are modelled here.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WarehouseItem {
+    pub id: i32,
+    pub typeid: i32,
+    pub ano: i32,
+    pub c: [i16; 5],
+    pub purchase: u8,
+    pub flag: u8,
+    pub apply_date: i64,
+    pub end_date: i64,
+    pub item_type: u8,
+    // UCC (79B), Card (48B), ClubsetWorkshop (28B) sub-structs are zero-filled
+    // on the wire until those features land.
+}
+
+/// `PlayerRoomInfo` (`pangya_game_st.h:2189`) — the 348-byte wire struct for one
+/// player inside a room (sent in `0x48`). Only the lobby-visible identity fields
+/// are modelled; the rest are zero-filled on the wire. The `PlayerRoomInfoEx`
+/// variant appends a full `CharacterInfo` (513 bytes).
+#[derive(Debug, Clone, Default)]
+pub struct PlayerRoomInfo {
+    pub oid: u32,
+    pub nickname: String,
+    pub guild_name: String,
+    pub position: u8,
+    pub capability: u32,
+    pub title: u32,
+    pub char_typeid: u32,
+    pub skin: [u32; 6],
+    /// Bitfield: team, away, master, sex, ready, quit-rate flags, etc.
+    pub state_flag: u16,
+    pub level: u8,
+    pub uid: u32,
+    pub mascot_typeid: u32,
+    /// The player's equipped character, appended for the `Ex` variant.
+    pub character: Option<CharacterInfo>,
+}
+
+/// `PlayerCanalInfo` (`pangya_game_st.h:2149`) — the 200-byte wire struct for
+/// one player in the channel lobby (sent in `0x46`).
+#[derive(Debug, Clone, Default)]
+pub struct PlayerCanalInfo {
+    pub uid: u32,
+    pub oid: u32,
+    /// Room number (-1 = in lobby, not in a room).
+    pub sala_numero: i16,
+    pub nickname: String,
+    pub level: u8,
+    pub capability: u32,
+    pub title: i32,
+    pub team_point: i32,
+    /// Bitfield: away, sexo, quiter_1/2, azinha, icon_angel.
+    pub state_flag: u8,
+    pub guild_uid: u32,
+    pub guild_index_mark: u32,
+}
+
 /// The assembled player aggregate — what `LoginTask` loads and `principal()`
 /// serializes. Currently carries the identity + member info + equip + characters;
 /// the full aggregate (caddies, mascots, warehouse, cards, mail, …) is added per

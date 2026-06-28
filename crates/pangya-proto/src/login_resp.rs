@@ -22,6 +22,21 @@ pub fn write_lp_string(out: &mut Vec<u8>, s: &str) {
     out.extend_from_slice(s.as_bytes());
 }
 
+/// `i16`-length-prefixed raw bytes — for fields that must round-trip non-UTF-8
+/// content (e.g. Shift-JIS room names from JP clients) verbatim.
+pub fn write_lp_bytes(out: &mut Vec<u8>, bytes: &[u8]) {
+    let len = bytes.len() as i16;
+    out.extend_from_slice(&len.to_le_bytes());
+    out.extend_from_slice(bytes);
+}
+
+/// Fixed-size raw bytes, NUL-padded — the byte variant of `write_fixed_string`.
+pub fn write_fixed_bytes(out: &mut Vec<u8>, bytes: &[u8], len: usize) {
+    let n = bytes.len().min(len);
+    out.extend_from_slice(&bytes[..n]);
+    out.extend(std::iter::repeat(0u8).take(len - n));
+}
+
 /// `0x10` — Login success: sends the auth key the client presents to the Game
 /// Server. Mirrors `pacote010`.
 pub fn build_login_success(auth_key: &str) -> Vec<u8> {

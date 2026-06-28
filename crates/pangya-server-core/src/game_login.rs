@@ -9,21 +9,39 @@
 use anyhow::Result;
 use pangya_db::repos;
 use pangya_db::DbPool;
-use pangya_model::CharacterInfo;
+use pangya_model::{CaddieInfo, CharacterInfo, ClubSetInfo, MascotInfo, UserEquip, WarehouseItem};
 use pangya_proto::game_resp::{self, ChannelInfoWire};
 use pangya_proto::GameLoginRequest;
 use tracing::{info, warn};
+
+/// The loaded player equipment, threaded from login to the `0x000B` handler so
+/// change-item requests for any type can be answered from real state.
+#[derive(Debug, Default, Clone)]
+pub struct PlayerEquipment {
+    pub equip: UserEquip,
+    pub characters: Vec<CharacterInfo>,
+    pub caddies: Vec<CaddieInfo>,
+    pub warehouse: Vec<WarehouseItem>,
+    pub mascots: Vec<MascotInfo>,
+    pub clubset_info: ClubSetInfo,
+    /// Account sex (0=male, 1=female). Used for the `state_flag` gender bit in
+    /// `0x48` PlayerRoomInfo.
+    pub sex: i16,
+}
 
 /// The outcome of a game-server login attempt.
 #[derive(Debug)]
 pub enum GameLoginOutcome {
     /// Login accepted: the ack body + the channel-list body to send, plus the
-    /// player's characters so the `0x000B` (change item) handler can answer
-    /// type-4 requests with the equipped character.
+    /// loaded player equipment so the `0x000B` (change item) handler can answer
+    /// any item-type request from real state.
     Accepted {
         uid: i64,
+        nickname: String,
         bodies: Vec<Vec<u8>>,
-        characters: Vec<CharacterInfo>,
+        // Boxed: PlayerEquipment holds several Vecs and is ~272 bytes; boxing
+        // keeps this enum's footprint close to the small `Denied` variant.
+        equipment: Box<PlayerEquipment>,
     },
     /// Login denied: a single denial body + whether to disconnect.
     Denied { body: Vec<u8>, disconnect: bool },
@@ -74,11 +92,28 @@ pub async fn handle_game_login(
     let _ = repos::register_logon(pool, req.uid).await;
     info!(uid = identity.uid, id = %identity.id, "game login accepted");
 
-    // Load the player's characters. The equipped character (the first owned,
-    // mirroring the C++ `equipDefaultCharacter` picking `mp_ce.begin()`) is
-    // serialized into the principal packet and returned for the 0x000B handler.
+    // Load the player's full equipment from the DB. All loaders fall back to
+    // empty/default values when their table is absent (dev safety), so a missing
+    // migration never breaks login.
     let characters = repos::characters(pool, req.uid).await?;
-    let equipped = characters.first();
+    let equip = repos::user_equip(pool, req.uid).await?;
+    let caddies = repos::caddies(pool, req.uid).await?;
+    let warehouse = repos::warehouse(pool, req.uid).await?;
+    let mascots = repos::mascots(pool, req.uid).await?;
+    let clubset_info = repos::clubset_info(pool, req.uid).await?;
+    // Load member info for the account sex (used for the 0x48 state_flag gender
+    // bit). Falls back to 0 (male) if unavailable.
+    let sex = repos::member_info(pool, req.uid)
+        .await?
+        .map(|m| m.sex)
+        .unwrap_or(0);
+
+    // The equipped character is the one referenced by UserEquip.character_id,
+    // falling back to the first owned (mirrors C++ equipDefaultCharacter).
+    let equipped: Option<&CharacterInfo> = (equip.character_id != 0)
+        .then(|| characters.iter().find(|c| c.id == equip.character_id))
+        .flatten()
+        .or_else(|| characters.first());
     if let Some(ci) = equipped {
         info!(
             uid = identity.uid,
@@ -99,18 +134,15 @@ pub async fn handle_game_login(
 
     // The equipment cascade (LoginTask::sendCompleteData). After the principal
     // packet the client expects a burst of collection packets; without them it
-    // hangs in "Loading...". For a fresh account most lists are empty, but the
-    // client still requires each packet. The equipped character_id is set in the
-    // user-equip packet so the client knows which character it is using.
-    let equipped_char_id = equipped.map(|ci| ci.id).unwrap_or(0);
-
+    // hangs in "Loading...". All builders now serialize real DB-loaded data.
     Ok(GameLoginOutcome::Accepted {
         uid: identity.uid,
+        nickname: identity.nickname.clone(),
         bodies: vec![
             game_resp::build_login_ack_d3(),
             // Full player info (0x44 option 0) — the client needs this before
-            // it can function in the lobby. The equipped CharacterInfo must be
-            // present or the client stays in "Loading..." / disconnects.
+            // it can function in the lobby. Both the equipped CharacterInfo and
+            // the UserEquip are now serialized from real DB data.
             game_resp::build_player_info(
                 &req.client_version,
                 identity.uid,
@@ -118,16 +150,25 @@ pub async fn handle_game_login(
                 &identity.nickname,
                 2048, // server property
                 equipped,
+                Some(&equip),
             ),
             // Equipment cascade (mirrors sendCompleteData order).
             game_resp::build_character_list(&characters),
-            game_resp::build_caddie_list(0),
-            game_resp::build_warehouse_list(0),
-            game_resp::build_mascot_list(0),
-            game_resp::build_user_equip(equipped_char_id),
+            game_resp::build_caddie_list(&caddies),
+            game_resp::build_warehouse_list(&warehouse),
+            game_resp::build_mascot_list(&mascots),
+            game_resp::build_user_equip(&equip),
             game_resp::build_channel_list(&channel_wires),
         ],
-        characters,
+        equipment: Box::new(PlayerEquipment {
+            equip,
+            characters,
+            caddies,
+            warehouse,
+            mascots,
+            clubset_info,
+            sex: sex.into(),
+        }),
     })
 }
 

@@ -89,7 +89,11 @@ impl ChannelRegistry {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Room {
     pub id: u32,
-    pub name: String,
+    pub name: Vec<u8>,
+    /// Room security key (17 bytes). Random printable chars generated on
+    /// creation (mirrors room::geraSecurityKey). The client validates room
+    /// operations against this key.
+    pub key: [u8; 17],
     /// 1 = no password (open), 0 = password required. Mirrors `senha_flag`.
     pub senha_flag: u8,
     /// 1 = waiting (in lobby), 0 = playing. Mirrors `state`.
@@ -120,10 +124,11 @@ pub struct Room {
 
 impl Room {
     /// Create a new room with sensible defaults (mirrors `RoomInfo::clear`).
-    pub fn new(id: u32, name: String, leader_uid: i64) -> Self {
+    pub fn new(id: u32, name: Vec<u8>, leader_uid: i64) -> Self {
         Self {
             id,
             name,
+            key: Self::generate_key(),
             senha_flag: 1, // open
             state: 1,      // waiting
             max_player: 4,
@@ -134,6 +139,34 @@ impl Room {
             players: vec![leader_uid],
             ..Default::default()
         }
+    }
+
+    /// Generate a 17-byte room security key (16 random printable chars + NUL).
+    /// Mirrors `room::geraSecurityKey` — chars in the range 60..254.
+    pub fn generate_key_pub() -> [u8; 17] {
+        Self::generate_key()
+    }
+
+    fn generate_key() -> [u8; 17] {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        // Simple xorshift seeded from the wall clock — sufficient for a
+        // non-cryptographic room key (the C++ uses MT19937).
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let mut state = seed.max(1);
+        let mut key = [0u8; 17];
+        for k in &mut key[..16] {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            *k = ((state % 195) + 60) as u8;
+        }
+        key[16] = 0; // NUL terminator
+        key
     }
 
     pub fn is_full(&self) -> bool {
@@ -173,7 +206,7 @@ impl RoomRegistry {
     }
 
     /// Create a room, returning its assigned id.
-    pub fn create(&mut self, name: String, leader_uid: i64) -> u32 {
+    pub fn create(&mut self, name: Vec<u8>, leader_uid: i64) -> u32 {
         self.next_id += 1;
         let id = self.next_id;
         self.rooms.insert(id, Room::new(id, name, leader_uid));
@@ -258,7 +291,7 @@ mod tests {
 
     #[test]
     fn room_create_add_remove() {
-        let mut room = Room::new(1, "Test Room".into(), 100);
+        let mut room = Room::new(1, "Test Room".as_bytes().to_vec(), 100);
         assert_eq!(room.num_player, 1);
         assert_eq!(room.senha_flag, 1); // open
         assert_eq!(room.state, 1); // waiting
@@ -277,7 +310,7 @@ mod tests {
 
     #[test]
     fn room_capacity_enforced() {
-        let mut room = Room::new(1, "Small".into(), 1);
+        let mut room = Room::new(1, "Small".as_bytes().to_vec(), 1);
         room.max_player = 2;
         assert!(room.add_player(2));
         assert!(!room.add_player(3)); // full
@@ -287,8 +320,8 @@ mod tests {
     #[test]
     fn room_registry_creates_and_lists() {
         let mut reg = RoomRegistry::new();
-        let id1 = reg.create("Room A".into(), 100);
-        let id2 = reg.create("Room B".into(), 200);
+        let id1 = reg.create("Room A".as_bytes().to_vec(), 100);
+        let id2 = reg.create("Room B".as_bytes().to_vec(), 200);
         assert_eq!(id2, id1 + 1);
 
         let list = reg.list();

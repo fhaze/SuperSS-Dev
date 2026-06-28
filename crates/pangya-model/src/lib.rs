@@ -15,7 +15,10 @@ pub mod server_list;
 pub use account::{Account, AuthKey};
 pub use auth::{gen_auth_key, md5_hex};
 pub use channel::{Channel, ChannelRegistry, Room, RoomRegistry};
-pub use player::{CharacterInfo, MemberInfo, PlayerIdentity, PlayerState, UserEquip, UserInfo};
+pub use player::{
+    CaddieInfo, CharacterInfo, ClubSetInfo, MascotInfo, MemberInfo, PlayerCanalInfo,
+    PlayerIdentity, PlayerRoomInfo, PlayerState, UserEquip, UserInfo, WarehouseItem,
+};
 pub use server_list::ServerEntry;
 
 /// Server type (`tipo`) used for inter-server addressing and the client's server

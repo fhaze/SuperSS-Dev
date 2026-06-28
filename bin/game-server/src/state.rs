@@ -81,13 +81,30 @@ impl ServerState {
     // ── rooms ────────────────────────────────────────────────────────────────
 
     /// Create a room, returning its assigned id.
-    pub fn create_room(&self, name: String, leader_uid: i64) -> u32 {
+    pub fn create_room(&self, name: Vec<u8>, leader_uid: i64) -> u32 {
         let id = 1 + self
             .next_room_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.rooms
             .insert(id, pangya_model::Room::new(id, name, leader_uid));
         id
+    }
+
+    /// Create a fully-specified room (carrying all `MakeRoom` request fields),
+    /// returning the created room (with its assigned id).
+    pub fn create_room_full(&self, mut room: pangya_model::Room) -> pangya_model::Room {
+        let id = 1 + self
+            .next_room_id
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        room.id = id;
+        room.numero = id as i16;
+        self.rooms.insert(id, room.clone());
+        room
+    }
+
+    /// Get a room by id.
+    pub fn get_room(&self, room_id: u32) -> Option<pangya_model::Room> {
+        self.rooms.get(&room_id).map(|r| r.clone())
     }
 
     /// List all rooms (for the room-list `0x47` response).

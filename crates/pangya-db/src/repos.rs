@@ -4,8 +4,8 @@
 //! names are documented at each function for traceability to the original.
 
 use pangya_model::{
-    Account, AuthKey, CharacterInfo, MemberInfo, PlayerIdentity, ServerEntry, ServerType,
-    UserEquip, UserInfo,
+    Account, AuthKey, CaddieInfo, CharacterInfo, ClubSetInfo, MascotInfo, MemberInfo,
+    PlayerIdentity, ServerEntry, ServerType, UserEquip, UserInfo, WarehouseItem,
 };
 use sqlx::mysql::MySqlRow;
 use sqlx::Row;
@@ -212,11 +212,13 @@ pub async fn member_info(pool: &DbPool, uid: i64) -> Result<Option<MemberInfo>, 
             nickname: get_string(&row, "NICK")?,
             guild_name: String::new(),
             guild_mark_img: String::new(),
-            capability: row.try_get("capability")?,
+            // The account table uses signed INT/smallint for these; cast to the
+            // model's unsigned types.
+            capability: row.try_get::<i32, _>("capability")? as u32,
             oid: 0,
             guild_uid: 0,
             state_flag: 0,
-            sex: row.try_get("Sex")?,
+            sex: row.try_get::<i16, _>("Sex")? as i8,
             level: 1,
             do_tutorial: row.try_get::<i64, _>("doTutorial")? != 0,
             school: row.try_get("School")?,
@@ -227,11 +229,184 @@ pub async fn member_info(pool: &DbPool, uid: i64) -> Result<Option<MemberInfo>, 
 }
 
 /// Load the equipped-slot indices. Replaces `CmdUserEquip` →
-/// `pangya.USP_CHAR_USER_EQUIP`. Falls back to defaults until the equipment
-/// tables land (Phase 6).
+/// `pangya.USP_CHAR_USER_EQUIP` (which reads `pangya_user_equip`).
+///
+/// If no row exists for the UID (a dev environment without migration 0003),
+/// returns a zeroed `UserEquip` so the client at least gets a valid struct.
 pub async fn user_equip(pool: &DbPool, uid: i64) -> Result<UserEquip, RepoError> {
-    let _ = (pool, uid);
-    Ok(UserEquip::default())
+    let row = sqlx::query(
+        "SELECT caddie_id, character_id, club_id, ball_type, \
+         item_slot_1, item_slot_2, item_slot_3, item_slot_4, item_slot_5, \
+         item_slot_6, item_slot_7, item_slot_8, item_slot_9, item_slot_10, \
+         Skin_1, Skin_2, Skin_3, Skin_4, Skin_5, Skin_6, \
+         mascot_id, poster_1, poster_2 \
+         FROM pangya_user_equip WHERE UID = ?",
+    )
+    .bind(uid)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(match row {
+        Some(row) => {
+            let item_slot = [
+                row.try_get::<i32, _>("item_slot_1")?,
+                row.try_get::<i32, _>("item_slot_2")?,
+                row.try_get::<i32, _>("item_slot_3")?,
+                row.try_get::<i32, _>("item_slot_4")?,
+                row.try_get::<i32, _>("item_slot_5")?,
+                row.try_get::<i32, _>("item_slot_6")?,
+                row.try_get::<i32, _>("item_slot_7")?,
+                row.try_get::<i32, _>("item_slot_8")?,
+                row.try_get::<i32, _>("item_slot_9")?,
+                row.try_get::<i32, _>("item_slot_10")?,
+            ];
+            let skin_id = [
+                row.try_get::<i32, _>("Skin_1")?,
+                row.try_get::<i32, _>("Skin_2")?,
+                row.try_get::<i32, _>("Skin_3")?,
+                row.try_get::<i32, _>("Skin_4")?,
+                row.try_get::<i32, _>("Skin_5")?,
+                row.try_get::<i32, _>("Skin_6")?,
+            ];
+            UserEquip {
+                caddie_id: row.try_get("caddie_id")?,
+                character_id: row.try_get("character_id")?,
+                clubset_id: row.try_get("club_id")?,
+                ball_typeid: row.try_get("ball_type")?,
+                item_slot,
+                skin_id,
+                // skin_typeid is not persisted in pangya_user_equip (the SP
+                // joins it from elsewhere); zeroed until that join is ported.
+                skin_typeid: [0; 6],
+                mascot_id: row.try_get("mascot_id")?,
+                poster: [row.try_get::<i32, _>("poster_1")?, row.try_get::<i32, _>("poster_2")?],
+            }
+        }
+        None => UserEquip::default(),
+    })
+}
+
+/// Load all caddies owned by a player. Replaces `CmdCaddieInfo(ALL)` →
+/// `pangya.ProcGetCaddieInfo`. Empty for a fresh account.
+pub async fn caddies(pool: &DbPool, uid: i64) -> Result<Vec<CaddieInfo>, RepoError> {
+    let rows = sqlx::query(
+        "SELECT item_id, typeid, parts_typeid, cLevel, Exp, RentFlag, Purchase, CheckEnd \
+         FROM pangya_caddie_information WHERE UID = ? AND Valid = 1",
+    )
+    .bind(uid)
+    .fetch_all(pool)
+    .await;
+
+    match rows {
+        Ok(rows) => Ok(rows
+            .into_iter()
+            .map(|row| CaddieInfo {
+                id: row.try_get::<i64, _>("item_id").unwrap_or(0) as i32,
+                typeid: row.try_get("typeid").unwrap_or(0),
+                parts_typeid: row.try_get("parts_typeid").unwrap_or(0),
+                level: clamp_u8(&row, "cLevel"),
+                exp: row.try_get::<i64, _>("Exp").unwrap_or(0) as u32,
+                rent_flag: clamp_u8(&row, "RentFlag"),
+                purchase: clamp_u8(&row, "Purchase"),
+                check_end: row.try_get("CheckEnd").unwrap_or(0),
+                ..Default::default()
+            })
+            .collect()),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// Load all warehouse items owned by a player. Replaces `CmdWarehouseItem(ALL)`
+/// → `pangya.ProcGetWarehouseItem`. Empty for a fresh account.
+pub async fn warehouse(pool: &DbPool, uid: i64) -> Result<Vec<WarehouseItem>, RepoError> {
+    let rows = sqlx::query(
+        "SELECT item_id, typeid, C0, C1, C2, C3, C4, Purchase, flag, ItemType \
+         FROM pangya_item_warehouse WHERE UID = ? AND valid = 1",
+    )
+    .bind(uid)
+    .fetch_all(pool)
+    .await;
+
+    match rows {
+        Ok(rows) => Ok(rows
+            .into_iter()
+            .map(|row| WarehouseItem {
+                id: row.try_get::<i64, _>("item_id").unwrap_or(0) as i32,
+                typeid: row.try_get("typeid").unwrap_or(0),
+                c: [
+                    row.try_get::<i64, _>("C0").unwrap_or(0) as i16,
+                    row.try_get::<i64, _>("C1").unwrap_or(0) as i16,
+                    row.try_get::<i64, _>("C2").unwrap_or(0) as i16,
+                    row.try_get::<i64, _>("C3").unwrap_or(0) as i16,
+                    row.try_get::<i64, _>("C4").unwrap_or(0) as i16,
+                ],
+                purchase: clamp_u8(&row, "Purchase"),
+                flag: clamp_u8(&row, "flag"),
+                item_type: clamp_u8(&row, "ItemType"),
+                ..Default::default()
+            })
+            .collect()),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// Load all mascots owned by a player. Replaces `CmdMascotInfo(ALL)` →
+/// `pangya.ProcGetMascotInfo`. Empty for a fresh account.
+pub async fn mascots(pool: &DbPool, uid: i64) -> Result<Vec<MascotInfo>, RepoError> {
+    let rows = sqlx::query(
+        "SELECT item_id, typeid, mLevel, mExp, Flag, Tipo, Message \
+         FROM pangya_mascot_info WHERE UID = ? AND Valid = 1",
+    )
+    .bind(uid)
+    .fetch_all(pool)
+    .await;
+
+    match rows {
+        Ok(rows) => Ok(rows
+            .into_iter()
+            .map(|row| MascotInfo {
+                id: row.try_get::<i64, _>("item_id").unwrap_or(0) as i32,
+                typeid: row.try_get("typeid").unwrap_or(0),
+                level: clamp_u8(&row, "mLevel"),
+                exp: row.try_get::<i64, _>("mExp").unwrap_or(0) as u32,
+                flag: clamp_u8(&row, "Flag"),
+                tipo: row.try_get("Tipo").unwrap_or(0),
+                message: get_string(&row, "Message").unwrap_or_default(),
+            })
+            .collect()),
+        Err(_) => Ok(Vec::new()),
+    }
+}
+
+/// Resolve the equipped clubset into a `ClubSetInfo` (the 28-byte wire struct).
+/// `UserEquip.clubset_id` holds the warehouse **item_id** (the instance, per
+/// the C++ `player.cpp`), so we load the matching warehouse row by item_id and
+/// read its typeid + workshop stats. `slot_c`/`enchant_c` stay zero until the
+/// full clubset-stats system lands.
+pub async fn clubset_info(pool: &DbPool, uid: i64) -> Result<ClubSetInfo, RepoError> {
+    let equip = user_equip(pool, uid).await?;
+    if equip.clubset_id == 0 {
+        return Ok(ClubSetInfo::default());
+    }
+    let row = sqlx::query(
+        "SELECT item_id, typeid FROM pangya_item_warehouse \
+         WHERE UID = ? AND item_id = ? AND valid = 1 LIMIT 1",
+    )
+    .bind(uid)
+    .bind(equip.clubset_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(match row {
+        Some(row) => ClubSetInfo {
+            id: row.try_get::<i64, _>("item_id").unwrap_or(0) as i32,
+            typeid: row.try_get("typeid").unwrap_or(0),
+            ..Default::default()
+        },
+        None => ClubSetInfo {
+            id: equip.clubset_id,
+            ..Default::default()
+        },
+    })
 }
 
 /// Load all characters for a player. Replaces `CmdCharacterInfo(ALL)` →

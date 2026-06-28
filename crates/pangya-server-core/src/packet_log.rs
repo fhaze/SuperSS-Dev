@@ -50,10 +50,6 @@ pub fn log_packet(dir: Dir, srv: &str, body: &[u8]) {
         srv,
         opcode,
         body.len(),
-        if hex.len() > 128 {
-            format!("{}...(truncated, {} bytes)", &hex[..128], payload.len())
-        } else {
-            hex
-        }
+        hex
     );
 }

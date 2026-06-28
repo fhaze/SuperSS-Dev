@@ -100,7 +100,7 @@ pub struct EnterChannelRequest {
 }
 
 /// `0x08` — create room (MakeRoom). Field order from `channel::requestMakeRoom`
-/// (channel.cpp:1388-1405).
+/// (channel.cpp:1388-1428).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MakeRoomRequest {
     pub option: u8,
@@ -116,7 +116,13 @@ pub struct MakeRoomRequest {
     pub fixed_hole: Option<u32>,
     /// natural + short-game flag.
     pub natural: u32,
-    pub name: String,
+    /// Room name as raw bytes (preserves Shift-JIS from JP clients; forwarded
+    /// verbatim so lossy UTF-8 decoding doesn't corrupt it on round-trip).
+    pub name: Vec<u8>,
+    /// Room password (empty string if no password).
+    pub password: String,
+    /// artefato (u32) — artifact/match-modifier flag.
+    pub artefato: u32,
 }
 
 /// `0x09` — enter room.
@@ -182,7 +188,9 @@ fn parse_make_room(r: &mut PayloadReader) -> Result<MakeRoomRequest, ProtoError>
     };
 
     let natural = r.read_u32("make_room.natural")?;
-    let name = r.read_string("make_room.name")?;
+    let name = r.read_raw_string("make_room.name")?;
+    let password = r.read_string("make_room.password")?;
+    let artefato = r.read_u32("make_room.artefato")?;
 
     Ok(MakeRoomRequest {
         option,
@@ -197,6 +205,8 @@ fn parse_make_room(r: &mut PayloadReader) -> Result<MakeRoomRequest, ProtoError>
         fixed_hole,
         natural,
         name,
+        password,
+        artefato,
     })
 }
 
@@ -293,13 +303,17 @@ mod tests {
         body.push(0); // modo (not repeat)
         body.extend(&0u32.to_le_bytes()); // natural
         body.extend(str_bytes("My Room"));
+        body.extend(str_bytes("")); // password (empty)
+        body.extend(&0u32.to_le_bytes()); // artefato
         let pkt = GamePacket::parse(&body).unwrap();
         match pkt {
             GamePacket::MakeRoom(req) => {
-                assert_eq!(req.name, "My Room");
+                assert_eq!(req.name, b"My Room");
                 assert_eq!(req.max_player, 4);
                 assert_eq!(req.qntd_hole, 18);
                 assert!(req.hole_repeat.is_none());
+                assert_eq!(req.password, "");
+                assert_eq!(req.artefato, 0);
             }
             other => panic!("expected MakeRoom, got {other:?}"),
         }
