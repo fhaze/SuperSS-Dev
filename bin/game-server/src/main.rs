@@ -12,7 +12,7 @@ mod state;
 use anyhow::Result;
 use bytes::BytesMut;
 use pangya_config::ServerConfig;
-use pangya_db::DbPool;
+use pangya_db::{repos, DbPool};
 use pangya_model::ChannelRegistry;
 use pangya_net::codec::{Format, PangyaDecoder};
 use pangya_net::framing::{self, SessionKey};
@@ -617,9 +617,153 @@ async fn handle_client(
                                 let _ = send_server(&ack, sk, &mut write_half).await;
                             }
                         }
+                        0x140 => {
+                            // Enter Shop (requestEnterShop) — ack with 0x20E.
+                            let ack = game_resp::build_shop_enter_ack();
+                            let _ = send_server(&ack, sk, &mut write_half).await;
+                        }
+                        0x1D => {
+                            // Buy Item Shop (requestBuyItemShop). v1: pang only,
+                            // permanent items. Request: option:u8, qntd:u16, then
+                            // qntd × BuyItem (we read typeid@4, qntd@12, pang@16).
+                            // NOTE: v1 trusts the client-sent pang price; the proper
+                            // anti-cheat is to validate it against the IFF
+                            // ShopDados.price (record offset 116) — a v1.1 follow-up.
+                            if let Some(u) = uid {
+                                let payload = &frame.body[2..];
+                                let qntd = if payload.len() >= 3 {
+                                    u16::from_le_bytes([payload[1], payload[2]]) as usize
+                                } else {
+                                    0
+                                };
+                                let stride = if qntd > 0 && (payload.len() - 3) % qntd == 0 {
+                                    (payload.len() - 3) / qntd
+                                } else {
+                                    0
+                                };
+                                if stride >= 24 {
+                                    let rd_u32 = |o: usize| {
+                                        u32::from_le_bytes(payload[o..o + 4].try_into().unwrap())
+                                    };
+                                    let mut items: Vec<(i32, u16)> = Vec::with_capacity(qntd);
+                                    let mut total_pang: u64 = 0;
+                                    for i in 0..qntd {
+                                        let o = 3 + i * stride;
+                                        let typeid = rd_u32(o + 4) as i32;
+                                        let item_qntd = rd_u32(o + 12).max(1) as u16;
+                                        total_pang += rd_u32(o + 16) as u64; // client price
+                                        items.push((typeid, item_qntd));
+                                    }
+                                    let bal = repos::user_info(&pool, u).await.unwrap_or_default();
+                                    let ok = total_pang > 0
+                                        && bal.pang >= total_pang
+                                        && repos::spend_pang(&pool, u, total_pang)
+                                            .await
+                                            .unwrap_or(false);
+                                    if ok {
+                                        let new_pang = bal.pang - total_pang;
+                                        let mut bought = Vec::with_capacity(items.len());
+                                        for (typeid, q) in &items {
+                                            let item_id = repos::add_warehouse_item(&pool, u, *typeid)
+                                                .await
+                                                .unwrap_or(0);
+                                            bought.push(game_resp::BoughtItem {
+                                                typeid: *typeid,
+                                                item_id: item_id as i32,
+                                                qntd: *q,
+                                            });
+                                        }
+                                        let _ = send_server(
+                                            &game_resp::build_buy_result(0, new_pang, bal.cookie),
+                                            sk, &mut write_half,
+                                        ).await;
+                                        let _ = send_server(
+                                            &game_resp::build_buy_receipt(&bought, new_pang, bal.cookie),
+                                            sk, &mut write_half,
+                                        ).await;
+                                        let _ = send_server(
+                                            &game_resp::build_pang_spent(new_pang, total_pang),
+                                            sk, &mut write_half,
+                                        ).await;
+                                        // Trailing 0x20E ack (re-arms the shop UI),
+                                        // matching the capture's post-buy sequence.
+                                        let _ = send_server(
+                                            &game_resp::build_shop_enter_ack(),
+                                            sk, &mut write_half,
+                                        ).await;
+                                        info!(
+                                            "[{}] {peer}: bought {} item(s) for {} pang ({} left)",
+                                            LOG_PREFIX, items.len(), total_pang, new_pang
+                                        );
+                                    } else {
+                                        // Insufficient funds / invalid → error result.
+                                        let _ = send_server(
+                                            &game_resp::build_buy_result(2, bal.pang, bal.cookie),
+                                            sk, &mut write_half,
+                                        ).await;
+                                        warn!("[{}] {peer}: buy rejected (need {} pang, have {})", LOG_PREFIX, total_pang, bal.pang);
+                                    }
+                                }
+                            }
+                        }
+                        0x20 => {
+                            // Change Player Item (closet / "my room") —
+                            // requestChangePlayerItemMyRoom. type 0 = "character
+                            // parts complete": the client sends the full updated
+                            // CharacterInfo; persist its parts so the equip
+                            // survives relog, then ack with 0x6B. Other sub-types
+                            // (caddie/ball/clubset/…) are not persisted yet.
+                            if let Some(u) = uid {
+                                let payload = &frame.body[2..];
+                                let sub = payload.first().copied().unwrap_or(0xFF);
+                                if sub == 0 && payload.len() >= 1 + 513 {
+                                    let ci = &payload[1..1 + 513];
+                                    if let Some((id, parts_typeid, parts_id)) =
+                                        game_resp::read_character_parts(ci)
+                                    {
+                                        if id != 0 {
+                                            let _ = repos::update_character_parts(
+                                                &pool, u, id, &parts_typeid, &parts_id,
+                                            )
+                                            .await;
+                                            // Keep the in-memory character in sync.
+                                            if let Some(eq) = equipment.as_mut() {
+                                                if let Some(c) = eq
+                                                    .characters
+                                                    .iter_mut()
+                                                    .find(|c| c.id == id)
+                                                {
+                                                    c.parts_typeid = parts_typeid;
+                                                    c.parts_id = parts_id;
+                                                }
+                                            }
+                                            info!("[{}] {peer}: persisted parts for character {id}", LOG_PREFIX);
+                                        }
+                                        let ack = game_resp::build_equip_parts_ack(ci);
+                                        let _ = send_server(&ack, sk, &mut write_half).await;
+                                    }
+                                }
+                            }
+                        }
                         0x16E => {
-                            // Check Attendance Reward — respond with empty notice.
-                            let resp = game_resp::build_notice_ack(0);
+                            // Check Attendance Reward (requestCheckAttendanceReward).
+                            // The client expects a 0x248 AttendanceRewardInfo here
+                            // (it shows the login-streak dialog on logout); replying
+                            // with a notice ack made the client error on logout.
+                            // No attendance system yet → default (no-reward) state.
+                            let resp =
+                                game_resp::build_attendance_reward(0, 0, (0, 0), (0, 0), 0);
+                            let _ = send_server(&resp, sk, &mut write_half).await;
+                        }
+                        0x16F => {
+                            // Attendance Reward Login Count
+                            // (requestAttendanceRewardLoginCount) — sent during
+                            // logout. The C++ updates the streak and replies 0x249;
+                            // without it the client errors on logout. No attendance
+                            // system yet → default (no-reward) state.
+                            let resp = game_resp::build_attendance_login_count(
+                                0, 0, (0, 0), (0, 0), 0,
+                            );
                             let _ = send_server(&resp, sk, &mut write_half).await;
                         }
                         0x09C => {

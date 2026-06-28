@@ -45,6 +45,10 @@ pub struct MemberInfo {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UserInfo {
     pub pang: u64,
+    /// Cash currency. In the C++ this is `PlayerInfo::cookie` (separate from the
+    /// `UserInfo` struct); colocated here as the other spendable balance. Sent in
+    /// the `0x96` packet, not the principal's UserInfo block.
+    pub cookie: u64,
     pub exp: u32,
     pub level: u8,
     pub jogado: i32, // games played

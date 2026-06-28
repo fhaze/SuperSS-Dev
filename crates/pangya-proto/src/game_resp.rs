@@ -81,6 +81,37 @@ pub fn write_character_info(out: &mut Vec<u8>, ci: &pangya_model::CharacterInfo)
     debug_assert_eq!(out.len() - start, 513, "CharacterInfo must be 513 bytes");
 }
 
+/// Read `id`, `parts_typeid[24]`, and `parts_id[24]` from a serialized
+/// `CharacterInfo` (the 513-byte struct the client sends on a `0x20` type-0
+/// equip). Inverse of the relevant fields in [`write_character_info`]. Returns
+/// `None` if the buffer is too short.
+pub fn read_character_parts(ci: &[u8]) -> Option<(i32, [i32; 24], [i32; 24])> {
+    if ci.len() < 513 {
+        return None;
+    }
+    let rd = |o: usize| i32::from_le_bytes(ci[o..o + 4].try_into().unwrap());
+    let id = rd(4);
+    let mut parts_typeid = [0i32; 24];
+    let mut parts_id = [0i32; 24];
+    for i in 0..24 {
+        parts_typeid[i] = rd(12 + 4 * i);
+        parts_id[i] = rd(108 + 4 * i);
+    }
+    Some((id, parts_typeid, parts_id))
+}
+
+/// `0x6B` — equip ack for a `0x20` type-0 (character parts) equip. Mirrors
+/// `pacote06B`: `err_code:u8 (4 = success), type:u8 (0)`, then the persisted
+/// `CharacterInfo` (513 bytes, echoed back).
+pub fn build_equip_parts_ack(ci: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + 513);
+    write_opcode(0x6B, &mut out);
+    out.push(4); // err_code 4 = success
+    out.push(0); // type 0 = character parts
+    out.extend_from_slice(ci);
+    out
+}
+
 /// Serialize a `UserEquip` as the packed 116-byte wire struct, mirroring
 /// `pangya_game_st.h:1003`: `caddie_id, character_id, clubset_id, ball_typeid,
 /// item_slot[10], skin_id[6], skin_typeid[6], mascot_id, poster[2]`.
@@ -193,6 +224,7 @@ pub fn build_player_info(
     equipped_char: Option<&pangya_model::CharacterInfo>,
     equip: Option<&pangya_model::UserEquip>,
     clubset: Option<&pangya_model::ClubSetInfo>,
+    pang: u64,
 ) -> Vec<u8> {
     let mut out = Vec::with_capacity(13000);
     write_opcode(0x44, &mut out);
@@ -214,9 +246,12 @@ pub fn build_player_info(
     // uid (u32)
     out.extend_from_slice(&(uid as u32).to_le_bytes());
 
-    // UserInfo (245 bytes) — all zeros (fresh account).
-    // Size confirmed empirically from the live C++ server's 0x0044 packet.
+    // UserInfo (245 bytes). Mostly zeros, but `pang` (the player's money) lives
+    // at offset 79 within this block (verified against the live 0x0044 capture) —
+    // the client reads the lobby pang balance from here.
+    let ui_start = out.len();
     out.resize(out.len() + 245, 0);
+    out[ui_start + 79..ui_start + 87].copy_from_slice(&pang.to_le_bytes());
 
     // TrofelInfo (90 bytes) — zeros
     out.resize(out.len() + 90, 0);
@@ -568,6 +603,128 @@ pub fn build_exit_lobby_ack() -> Vec<u8> {
     let mut out = Vec::with_capacity(2);
     write_opcode(0xF6, &mut out);
     out
+}
+
+// ── currency + item shop ─────────────────────────────────────────────────────
+
+/// `0x96` — the player's cookie (cash) balance, sent in the login cascade
+/// (separate from the principal, which only carries `pang`). Body: `cookie:u64`.
+pub fn build_cookie(cookie: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(10);
+    write_opcode(0x96, &mut out);
+    out.extend_from_slice(&cookie.to_le_bytes());
+    out
+}
+
+/// `0x20E` — enter-shop ack. Response to `0x0140` (requestEnterShop). Body is 8
+/// zero bytes in the capture.
+pub fn build_shop_enter_ack() -> Vec<u8> {
+    let mut out = Vec::with_capacity(10);
+    write_opcode(0x20E, &mut out);
+    out.resize(out.len() + 8, 0);
+    out
+}
+
+/// `0x68` — buy-item-shop result. Body: `result:u32` (0 = success, else an error
+/// code) then the new `pang:u64` and `cookie:u64` balances.
+pub fn build_buy_result(result: u32, pang: u64, cookie: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(22);
+    write_opcode(0x68, &mut out);
+    out.extend_from_slice(&result.to_le_bytes());
+    out.extend_from_slice(&pang.to_le_bytes());
+    out.extend_from_slice(&cookie.to_le_bytes());
+    out
+}
+
+/// An item granted by a purchase, for the `0xAA` receipt.
+pub struct BoughtItem {
+    pub typeid: i32,
+    /// The new warehouse `item_id`.
+    pub item_id: i32,
+    pub qntd: u16,
+}
+
+/// `0xAA` — item-acquired receipt. Mirrors `pacote0AA`: `count:u16`, then per
+/// item `typeid:u32, id:u32, time:u16, flag_time:u8, qntd:u16` followed by a
+/// 25-byte SYSTEMTIME + UCC block (zero for a plain permanent item), then the
+/// new `pang:u64` and `cookie:u64`. Tells the client to add the item to the bag.
+pub fn build_buy_receipt(items: &[BoughtItem], pang: u64, cookie: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + 2 + items.len() * 38 + 16);
+    write_opcode(0xAA, &mut out);
+    out.extend_from_slice(&(items.len() as u16).to_le_bytes());
+    for it in items {
+        out.extend_from_slice(&it.typeid.to_le_bytes());
+        out.extend_from_slice(&it.item_id.to_le_bytes());
+        out.extend_from_slice(&0u16.to_le_bytes()); // time (0 = permanent)
+        out.push(0); // flag_time
+        out.extend_from_slice(&it.qntd.to_le_bytes());
+        out.resize(out.len() + 25, 0); // SYSTEMTIME(16) + ucc.IDX(9), zero
+    }
+    out.extend_from_slice(&pang.to_le_bytes());
+    out.extend_from_slice(&cookie.to_le_bytes());
+    out
+}
+
+/// `0xC8` — pang-spent notification. Body: the new `pang:u64` balance and the
+/// `amount:u64` just deducted. Updates the client's pang display.
+pub fn build_pang_spent(pang: u64, amount: u64) -> Vec<u8> {
+    let mut out = Vec::with_capacity(18);
+    write_opcode(0xC8, &mut out);
+    out.extend_from_slice(&pang.to_le_bytes());
+    out.extend_from_slice(&amount.to_le_bytes());
+    out
+}
+
+/// Serialize an attendance packet (`0x248` check / `0x249` login-count update),
+/// both `pacote248`/`pacote249`: `option:i32`, then `AttendanceRewardInfo`
+/// (21 bytes): `login:u8`, `now{typeid:i32, qntd:i32}`, `after{typeid:i32,
+/// qntd:i32}`, `counter:i32`.
+fn build_attendance(
+    opcode: u16,
+    option: i32,
+    login: u8,
+    now: (i32, i32),
+    after: (i32, i32),
+    counter: i32,
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(2 + 4 + 21);
+    write_opcode(opcode, &mut out);
+    out.extend_from_slice(&option.to_le_bytes());
+    out.push(login);
+    out.extend_from_slice(&now.0.to_le_bytes());
+    out.extend_from_slice(&now.1.to_le_bytes());
+    out.extend_from_slice(&after.0.to_le_bytes());
+    out.extend_from_slice(&after.1.to_le_bytes());
+    out.extend_from_slice(&counter.to_le_bytes());
+    out
+}
+
+/// `0x248` — attendance reward info, the response to `0x16E` (Check Attendance
+/// Reward). The client reads this to show the login-streak dialog; it expects a
+/// well-formed `0x248` here, not a notice ack, or it errors. We have no
+/// attendance system yet, so callers send the default (no-reward) state.
+pub fn build_attendance_reward(
+    option: i32,
+    login: u8,
+    now: (i32, i32),
+    after: (i32, i32),
+    counter: i32,
+) -> Vec<u8> {
+    build_attendance(0x248, option, login, now, after, counter)
+}
+
+/// `0x249` — attendance login-count update, the response to `0x16F`
+/// (requestAttendanceRewardLoginCount, sent during logout). Same
+/// `AttendanceRewardInfo` payload as `0x248`. Without it the client errors on
+/// logout.
+pub fn build_attendance_login_count(
+    option: i32,
+    login: u8,
+    now: (i32, i32),
+    after: (i32, i32),
+    counter: i32,
+) -> Vec<u8> {
+    build_attendance(0x249, option, login, now, after, counter)
 }
 
 /// Serialize a `PlayerRoomInfo` as the packed wire struct. With `include_char`
@@ -1037,6 +1194,41 @@ mod tests {
     /// The 348-byte `PlayerRoomInfo` header captured from the live C++ server
     /// (`0x48`, room master Kooh). Guards the field layout — notably the
     /// `flag_item_boost`/`mascot_typeid` ordering that was previously swapped.
+    /// Shop buy responses, checked byte-for-byte against the live capture of a
+    /// real purchase (Erika part `0x08044000` for 13000 pang; balances after:
+    /// pang 971150, cookie 999901; new warehouse item_id 11378).
+    #[test]
+    fn shop_buy_responses_match_live_capture() {
+        // 0x68 result: result=0, pang, cookie.
+        let r = build_buy_result(0, 971150, 999901);
+        assert_eq!(hex(&r[2..]), "000000008ed10e0000000000dd410f0000000000");
+        // 0xAA receipt: one permanent part, qty 1.
+        let rec = build_buy_receipt(
+            &[BoughtItem { typeid: 0x08044000, item_id: 11378, qntd: 1 }],
+            971150,
+            999901,
+        );
+        assert_eq!(
+            hex(&rec[2..]),
+            "010000400408722c00000000000100000000000000000000000000000000000000000000000000008ed10e0000000000dd410f0000000000"
+        );
+        // 0xC8 pang-spent: new pang, amount.
+        let s = build_pang_spent(971150, 13000);
+        assert_eq!(hex(&s[2..]), "8ed10e0000000000c832000000000000");
+    }
+
+    fn hex(b: &[u8]) -> String {
+        b.iter().map(|x| format!("{x:02x}")).collect()
+    }
+
+    /// `0x248` attendance reward, checked against the live capture (day 2:
+    /// item 0x18000009 ×3 now and next).
+    #[test]
+    fn attendance_reward_matches_live_capture() {
+        let r = build_attendance_reward(0, 1, (0x18000009, 3), (0x18000009, 3), 2);
+        assert_eq!(hex(&r[2..]), "00000000010900001803000000090000180300000002000000");
+    }
+
     #[test]
     fn player_room_info_header_matches_live_capture() {
         let capture_hex =
@@ -1065,9 +1257,9 @@ mod tests {
     fn player_info_carries_equipped_character() {
         let ci = pangya_model::CharacterInfo::from_iff(0x04000001, 1, [9, 11, 6, 2, 2]);
         let with_char =
-            build_player_info("SS.R7.995.00", 1, "test", "Tester", 2048, Some(&ci), None, None);
+            build_player_info("SS.R7.995.00", 1, "test", "Tester", 2048, Some(&ci), None, None, 0);
         let without =
-            build_player_info("SS.R7.995.00", 1, "test", "Tester", 2048, None, None, None);
+            build_player_info("SS.R7.995.00", 1, "test", "Tester", 2048, None, None, None, 0);
         // Same total size whether or not a character is supplied.
         assert_eq!(with_char.len(), without.len());
 

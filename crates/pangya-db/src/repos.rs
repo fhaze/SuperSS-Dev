@@ -494,10 +494,78 @@ fn clamp_u8(row: &MySqlRow, col: &str) -> u8 {
     row.try_get::<i64, _>(col).unwrap_or(0).clamp(0, 255) as u8
 }
 
-/// Load the live user-stats subset. Replaces `CmdUserInfo` → `pangya.GetInfo_User`.
+/// Load the player's spendable balances (pang + cookie). Replaces the pang/cookie
+/// fields of `CmdUserInfo` → `pangya.GetInfo_User`. Missing row → zero balances.
 pub async fn user_info(pool: &DbPool, uid: i64) -> Result<UserInfo, RepoError> {
-    let _ = (pool, uid);
-    Ok(UserInfo::default())
+    let row = sqlx::query("SELECT pang, cookie FROM pangya_player_currency WHERE UID = ?")
+        .bind(uid)
+        .fetch_optional(pool)
+        .await;
+    Ok(match row {
+        Ok(Some(row)) => UserInfo {
+            pang: row.try_get::<u64, _>("pang").unwrap_or(0),
+            cookie: row.try_get::<u64, _>("cookie").unwrap_or(0),
+            ..Default::default()
+        },
+        _ => UserInfo::default(),
+    })
+}
+
+/// Deduct `amount` pang from a player, guarded so the balance never goes negative.
+/// Returns `true` if the deduction was applied (sufficient balance), else `false`.
+pub async fn spend_pang(pool: &DbPool, uid: i64, amount: u64) -> Result<bool, RepoError> {
+    let res = sqlx::query(
+        "UPDATE pangya_player_currency SET pang = pang - ? WHERE UID = ? AND pang >= ?",
+    )
+    .bind(amount)
+    .bind(uid)
+    .bind(amount)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() > 0)
+}
+
+/// Persist a character's full equipped-parts arrays (the C++
+/// `CmdUpdateCharacterAllPartEquiped`, sent on a `0x20` type-0 equip). Updates
+/// every `parts_N` (typeid) + `parts_id_N` (instance id) for the character row.
+pub async fn update_character_parts(
+    pool: &DbPool,
+    uid: i64,
+    item_id: i32,
+    parts_typeid: &[i32; 24],
+    parts_id: &[i32; 24],
+) -> Result<(), RepoError> {
+    let mut q = sqlx::query(
+        "UPDATE pangya_character_information SET \
+         parts_1=?, parts_id_1=?, parts_2=?, parts_id_2=?, parts_3=?, parts_id_3=?, \
+         parts_4=?, parts_id_4=?, parts_5=?, parts_id_5=?, parts_6=?, parts_id_6=?, \
+         parts_7=?, parts_id_7=?, parts_8=?, parts_id_8=?, parts_9=?, parts_id_9=?, \
+         parts_10=?, parts_id_10=?, parts_11=?, parts_id_11=?, parts_12=?, parts_id_12=?, \
+         parts_13=?, parts_id_13=?, parts_14=?, parts_id_14=?, parts_15=?, parts_id_15=?, \
+         parts_16=?, parts_id_16=?, parts_17=?, parts_id_17=?, parts_18=?, parts_id_18=?, \
+         parts_19=?, parts_id_19=?, parts_20=?, parts_id_20=?, parts_21=?, parts_id_21=?, \
+         parts_22=?, parts_id_22=?, parts_23=?, parts_id_23=?, parts_24=?, parts_id_24=? \
+         WHERE item_id=? AND UID=?",
+    );
+    for i in 0..24 {
+        q = q.bind(parts_typeid[i]).bind(parts_id[i]);
+    }
+    q.bind(item_id).bind(uid).execute(pool).await?;
+    Ok(())
+}
+
+/// Grant an item to a player's warehouse (the C++ `item_manager::addItem` for a
+/// shop purchase). Returns the new warehouse `item_id` (echoed back to the client
+/// in the buy receipt). `ItemType` defaults to 2 (a normal item).
+pub async fn add_warehouse_item(pool: &DbPool, uid: i64, typeid: i32) -> Result<i64, RepoError> {
+    let res = sqlx::query(
+        "INSERT INTO pangya_item_warehouse (UID, typeid, ItemType, Purchase) VALUES (?, ?, 2, 1)",
+    )
+    .bind(uid)
+    .bind(typeid)
+    .execute(pool)
+    .await?;
+    Ok(res.last_insert_id() as i64)
 }
 
 // ── auth keys (game server verify) ────────────────────────────────────────────

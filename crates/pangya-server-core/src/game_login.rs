@@ -101,6 +101,8 @@ pub async fn handle_game_login(
     let warehouse = repos::warehouse(pool, req.uid).await?;
     let mascots = repos::mascots(pool, req.uid).await?;
     let clubset_info = repos::clubset_info(pool, req.uid).await?;
+    // Spendable balances (pang + cookie) for the principal + the shop.
+    let user_info = repos::user_info(pool, req.uid).await?;
     // Load member info for the account sex (used for the 0x48 state_flag gender
     // bit). Falls back to 0 (male) if unavailable.
     let sex = repos::member_info(pool, req.uid)
@@ -152,6 +154,7 @@ pub async fn handle_game_login(
                 equipped,
                 Some(&equip),
                 Some(&clubset_info),
+                user_info.pang,
             ),
             // Equipment cascade (mirrors sendCompleteData order).
             game_resp::build_character_list(&characters),
@@ -159,6 +162,8 @@ pub async fn handle_game_login(
             game_resp::build_warehouse_list(&warehouse),
             game_resp::build_mascot_list(&mascots),
             game_resp::build_user_equip(&equip),
+            // Cookie (cash) balance — sent separately from the principal.
+            game_resp::build_cookie(user_info.cookie),
             game_resp::build_channel_list(&channel_wires),
         ],
         equipment: Box::new(PlayerEquipment {
