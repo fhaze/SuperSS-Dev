@@ -1,0 +1,14 @@
+[package]
+name = "iff-import"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pangya-iff = { path = "../../crates/pangya-iff" }
+pangya-db = { path = "../../crates/pangya-db" }
+sqlx.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+encoding_rs = "0.8"

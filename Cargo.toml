@@ -14,6 +14,7 @@ members = [
     "bin/rank-server",
     "bin/message-server",
     "bin/gg-auth-server",
+    "bin/iff-import",
 ]
 
 [workspace.package]

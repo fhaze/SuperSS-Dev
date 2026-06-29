@@ -101,6 +101,20 @@ impl<R: Read + Seek> IffArchive<R> {
         Ok(buf)
     }
 
+    /// Read a table as raw records: returns `(count, record_size, body)` where
+    /// `body` is the bytes after the 8-byte [`Head`]. Lets callers (e.g. the IFF
+    /// importer) read fields at fixed offsets without a typed record struct —
+    /// useful because every table shares the same `Base` prefix but has a
+    /// different total record size.
+    pub fn read_table_raw(&mut self, name: &str) -> Result<(usize, usize, Vec<u8>), IffError> {
+        let bytes = self.read_entry(name)?;
+        let head = Head::parse(&bytes)?;
+        let count = head.count_element as usize;
+        let body = bytes[HEAD_SIZE..].to_vec();
+        let record_size = if count > 0 { body.len() / count } else { 0 };
+        Ok((count, record_size, body))
+    }
+
     /// Load a table into a vector of records.
     ///
     /// Mirrors `MAKE_UNZIP_VECTOR`. Validates the header and that the entry
