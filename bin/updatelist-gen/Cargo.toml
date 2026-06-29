@@ -1,0 +1,11 @@
+[package]
+name = "updatelist-gen"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pangya-patch = { path = "../../crates/pangya-patch" }
+anyhow.workspace = true
+crc32fast = "1"

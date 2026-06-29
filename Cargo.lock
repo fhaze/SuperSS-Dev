@@ -1141,6 +1141,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pangya-patch"
+version = "0.1.0"
+
+[[package]]
 name = "pangya-proto"
 version = "0.1.0"
 dependencies = [
@@ -1980,6 +1984,15 @@ name = "unicode-properties"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
+
+[[package]]
+name = "updatelist-gen"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "crc32fast",
+ "pangya-patch",
+]
 
 [[package]]
 name = "url"

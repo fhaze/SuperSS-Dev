@@ -8,6 +8,7 @@ members = [
     "crates/pangya-db",
     "crates/pangya-model",
     "crates/pangya-server-core",
+    "crates/pangya-patch",
     "bin/auth-server",
     "bin/login-server",
     "bin/game-server",
@@ -16,6 +17,7 @@ members = [
     "bin/gg-auth-server",
     "bin/iff-import",
     "bin/iff-export",
+    "bin/updatelist-gen",
 ]
 
 [workspace.package]
