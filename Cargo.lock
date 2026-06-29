@@ -810,6 +810,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "iff-export"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "encoding_rs",
+ "pangya-db",
+ "sqlx",
+ "tokio",
+ "zip",
+]
+
+[[package]]
 name = "iff-import"
 version = "0.1.0"
 dependencies = [

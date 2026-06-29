@@ -13,6 +13,7 @@ CREATE TABLE `pangya_iff_item` (
   `id`          bigint NOT NULL AUTO_INCREMENT,
   `typeid`      bigint unsigned NOT NULL,        -- IFF _typeid (u32)
   `source`      varchar(24)  NOT NULL,           -- which IFF table
+  `seq`         int NOT NULL DEFAULT 0,          -- record index within that table (for DB->IFF export)
   `name`        varchar(255) NOT NULL DEFAULT '',-- decoded from Shift-JIS
   -- Base + ShopDados (uniform across all items)
   `price`       bigint unsigned NOT NULL DEFAULT 0,
@@ -40,5 +41,5 @@ CREATE TABLE `pangya_iff_item` (
   -- character), so they can't key the row. (typeid, source) is the lookup index.
   PRIMARY KEY (`id`),
   KEY `idx_iff_item_typeid` (`typeid`, `source`),
-  KEY `idx_iff_item_source` (`source`)
+  KEY `idx_iff_item_source` (`source`, `seq`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

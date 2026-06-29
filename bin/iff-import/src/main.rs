@@ -152,15 +152,16 @@ async fn main() -> Result<()> {
 
             sqlx::query(
                 "INSERT INTO pangya_iff_item \
-                 (typeid, source, name, price, discount, cond_value, is_cash, is_saleable, \
+                 (typeid, source, seq, name, price, discount, cond_value, is_cash, is_saleable, \
                   flag_shop, rental_flag, rental_days, active, \
                   c0, c1, c2, c3, c4, slot0, slot1, slot2, slot3, slot4, \
                   club0, club1, club2, club3, \
                   power_drive, drop_rate, power_gauge, pang_rate, exp_rate) \
-                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?, ?,?,?,?,?)",
+                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?, ?,?,?,?,?)",
             )
             .bind(typeid as u64)
             .bind(t.source)
+            .bind(i as i32)
             .bind(&name)
             .bind(price as u64)
             .bind(discount as i64)

@@ -294,3 +294,6 @@ Cargo.lock.bak
 # IDE
 /.vscode/
 /.idea/
+
+# PAK archives are large binaries — keep them out of git
+*.pak
