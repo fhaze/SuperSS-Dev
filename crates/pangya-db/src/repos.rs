@@ -554,6 +554,30 @@ pub async fn update_character_parts(
     Ok(())
 }
 
+/// Look up an item's shop price from the imported IFF registry, for buy
+/// validation. Returns `(price, discount, is_cash)`, or `None` if the typeid is
+/// not a known item. The server charges this price instead of trusting the
+/// client-sent one (anti-cheat). `discount` is the discounted price when
+/// non-zero; `is_cash` true means the cookie (CP) currency.
+pub async fn shop_price(
+    pool: &DbPool,
+    typeid: u64,
+) -> Result<Option<(u64, u64, bool)>, RepoError> {
+    let row = sqlx::query(
+        "SELECT price, discount, is_cash FROM pangya_iff_item WHERE typeid = ? LIMIT 1",
+    )
+    .bind(typeid)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|r| {
+        (
+            r.try_get::<u64, _>("price").unwrap_or(0),
+            r.try_get::<u32, _>("discount").unwrap_or(0) as u64,
+            r.try_get::<i8, _>("is_cash").unwrap_or(0) != 0,
+        )
+    }))
+}
+
 /// Deduct `amount` cookie (cash) from a player, guarded against going negative.
 /// Returns `true` if applied. Mirrors the cookie side of `consomeMoeda`.
 pub async fn spend_cookie(pool: &DbPool, uid: i64, amount: u64) -> Result<bool, RepoError> {

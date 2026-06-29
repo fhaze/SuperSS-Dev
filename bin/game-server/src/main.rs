@@ -645,23 +645,41 @@ async fn handle_client(
                                     let rd_u32 = |o: usize| {
                                         u32::from_le_bytes(payload[o..o + 4].try_into().unwrap())
                                     };
-                                    let mut items: Vec<(i32, u16)> = Vec::with_capacity(qntd);
-                                    let mut total_pang: u64 = 0;
-                                    let mut total_cookie: u64 = 0;
+                                    let mut items: Vec<(u32, u16)> = Vec::with_capacity(qntd);
                                     for i in 0..qntd {
                                         let o = 3 + i * stride;
-                                        let typeid = rd_u32(o + 4) as i32;
+                                        let typeid = rd_u32(o + 4);
                                         let item_qntd = rd_u32(o + 12).max(1) as u16;
-                                        // The client sends the price in pang OR cookie
-                                        // depending on whether it's a cash item.
-                                        total_pang += rd_u32(o + 16) as u64;
-                                        total_cookie += rd_u32(o + 20) as u64;
                                         items.push((typeid, item_qntd));
                                     }
+                                    // Price each item server-side from the IFF registry
+                                    // (pangya_iff_item) — charge our price + currency, not
+                                    // the client-sent one. Unknown typeid → reject.
+                                    let mut total_pang: u64 = 0;
+                                    let mut total_cookie: u64 = 0;
+                                    let mut known = true;
+                                    for (typeid, qty) in &items {
+                                        match repos::shop_price(&pool, *typeid as u64).await {
+                                            Ok(Some((price, discount, is_cash))) => {
+                                                let unit = if discount != 0 { discount } else { price };
+                                                let cost = unit.saturating_mul(*qty as u64);
+                                                if is_cash {
+                                                    total_cookie += cost;
+                                                } else {
+                                                    total_pang += cost;
+                                                }
+                                            }
+                                            _ => {
+                                                known = false;
+                                                break;
+                                            }
+                                        }
+                                    }
                                     let bal = repos::user_info(&pool, u).await.unwrap_or_default();
-                                    // Require at least one currency and enough of each
-                                    // (mirrors the C++ `cookie < cookie || pang < pang`).
-                                    let affordable = (total_pang > 0 || total_cookie > 0)
+                                    // Require a known item, at least one currency, and enough
+                                    // of each (mirrors the C++ `cookie < cookie || pang < pang`).
+                                    let affordable = known
+                                        && (total_pang > 0 || total_cookie > 0)
                                         && bal.pang >= total_pang
                                         && bal.cookie >= total_cookie;
                                     if affordable {
@@ -675,11 +693,12 @@ async fn handle_client(
                                         let new_cookie = bal.cookie - total_cookie;
                                         let mut bought = Vec::with_capacity(items.len());
                                         for (typeid, q) in &items {
-                                            let item_id = repos::add_warehouse_item(&pool, u, *typeid)
-                                                .await
-                                                .unwrap_or(0);
+                                            let item_id =
+                                                repos::add_warehouse_item(&pool, u, *typeid as i32)
+                                                    .await
+                                                    .unwrap_or(0);
                                             bought.push(game_resp::BoughtItem {
-                                                typeid: *typeid,
+                                                typeid: *typeid as i32,
                                                 item_id: item_id as i32,
                                                 qntd: *q,
                                             });
