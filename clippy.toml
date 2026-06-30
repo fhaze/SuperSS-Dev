@@ -1,2 +1,0 @@
-# Keep clippy permissive during the early port; tighten as the codebase matures.
-msrv = "1.81"
